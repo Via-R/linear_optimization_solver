@@ -1,5 +1,5 @@
 import numpy as np
-from fractions import Fraction
+from fractions import Fraction as Q
 
 class InputParser:
 	"""Reads file from input_path (parameter) and returns 
@@ -37,11 +37,11 @@ class InputParser:
 				line = line[0] + line[1:line.find(curr_sym)].replace("-", "+-") + line[line.find(curr_sym):]
 
 				parts_arr,  constant = line[:line.find(curr_sym)].split("+"), line[line.find(curr_sym)+len(curr_sym):]
-				raw_constants.append(Fraction(constant))
+				raw_constants.append(Q(constant))
 				raw_dict = {}
 				for i in parts_arr:
 					num, ind = i[:-1].split("x[")
-					raw_dict[int(ind)] = Fraction(num)
+					raw_dict[int(ind)] = Q(num)
 				raw_list = [0] * max(raw_dict, key=int)
 				for k, v in raw_dict.items():
 					raw_list[k - 1] = v
@@ -53,9 +53,9 @@ class InputParser:
 			for k, row in enumerate(raw_matrix):
 				if len(row) < InputParser.var_quantity:
 					for i in range(len(row), InputParser.var_quantity):
-						raw_matrix[k].append(Fraction(0, 1))
+						raw_matrix[k].append(Q(0, 1))
 
-			self.main_matrix = np.matrix(raw_matrix)
+			self.main_matrix = np.array(raw_matrix)
 			self.constants_vector = np.array(raw_constants)
 
 			#parsing last line goes here
@@ -70,8 +70,8 @@ class InputParser:
 
 	def _parse_first_line(self, line):
 		"""Gets a line and parses it into data concerning objective function
-		Form of output: |numpy array of Fractions| [ { factor's fraction }, ... ]
-		Index of each Fraction represents decremented index of corresponding variable
+		Form of output: |numpy array of Qs| [ { factor's fraction }, ... ]
+		Index of each Q represents decremented index of corresponding variable
 		Doesn't support error handling and constant terms"""
 
 		raw_array = {} #basically it's a resulting array, but without order
@@ -83,9 +83,9 @@ class InputParser:
 		op_arr = line.split('+')
 		for i in op_arr:
 			num, index = i[:-1].split("x[")
-			raw_array[int(index)] = Fraction(num)
+			raw_array[int(index)] = Q(num)
 
-		first_line_vect = [Fraction(0,1)] * max(raw_array, key=int)
+		first_line_vect = [Q(0,1)] * max(raw_array, key=int)
 		for k, v in raw_array.items():
 			first_line_vect[k - 1] = v
 		return task_type, np.array(first_line_vect)
@@ -104,7 +104,7 @@ class InputParser:
 				if i in expr:
 					op_sym = i
 					break
-			f_tuple = op_sym, Fraction(expr[expr.find(op_sym)+len(op_sym):])
+			f_tuple = op_sym, Q(expr[expr.find(op_sym)+len(op_sym):])
 			raw_dict[int(expr[2:expr.find(op_sym)-1])] = f_tuple
 		last_line_vect = [(4, 0)] * max(raw_dict, key=int)
 		for k, v in raw_dict.items():
@@ -146,6 +146,45 @@ class InputParser:
 		print("Inequalities' vector: {}\n".format(self.inequalities))
 
 
+# ------ Solver class section ------
+
+class Solver:
+	"""Основний клас, що містить спільні для всіх способів розв'язання методи та є базовим для класів,
+	які відповідають різним способам розв'язання"""
+	def __init__(self, input_data):
+		if input_data['data_type'] == "file":
+			reader_data = InputParser(input_data["data"]).get_data()
+			self.objective_function = reader_data["objective_function"]
+			self.task_type = reader_data["task_type"]
+			self.last_conditions = reader_data["last_conditions"]
+			self.matrix = reader_data["matrix"]
+			self.inequalities = reader_data["inequalities"]
+			self.constants = reader_data["constants"]
+		else:
+			print("This part has not been implemented yet")
+		self.col_num = 0
+		self.row_num = 2
+
+	def make_basis_column(self):
+		if self.matrix[self.row_num, self.col_num] == 0:
+			print("Unexpected zero during basis making")
+			return
+		elif self.matrix[self.row_num, self.col_num] != 1:
+			self.matrix[self.row_num] /= self.matrix[self.row_num, self.col_num]
+		
+		chosen_row = self.matrix[self.row_num]
+		for i in [x for x in range(len(self.matrix)) if x != self.row_num]:
+			self.matrix[i] -= chosen_row * self.matrix[i, self.col_num]
+
+
+class SimplexSolver(Solver):
+	"""Клас, що виконує розв'язання задачі лінійного програмування симплекс методом"""
+	def __init__(self, input_data):
+		super(SimplexSolver, self).__init__(input_data)
+		self.make_basis_column()
+		
+
+
 # ------ Test section ------
 
 import unittest
@@ -159,21 +198,24 @@ class TestParserMethods(unittest.TestCase):
 		"""Tests for valid parsing of the input file"""
 		dummy = InputParser('test_init')
 		test_dict = {
-			"objective_function": np.array([Fraction(-2, 1), Fraction(1, 1), Fraction(1, 1), Fraction(223, 1)]),
+			"objective_function": np.array([Q(-2, 1), Q(1, 1), Q(1, 1), Q(223, 1)]),
 			"task_type": "max",
-			"last_conditions": [(">", Fraction(0, 1)), (">=", Fraction(0, 1)), ("<", Fraction(3, 2)), ("<=", Fraction(2, 1))],
-			"matrix": np.matrix([
-			[Fraction(1, 1), Fraction(2, 1), Fraction(-3, 1), Fraction(-1, 1)],
-			[Fraction(1, 1), Fraction(3, 1), Fraction(-2, 1), Fraction(0, 1)], 
-			[Fraction(-4, 1), Fraction(-1, 1), Fraction(10, 1), Fraction(0, 1)], 
-			[Fraction(1, 1), Fraction(-4, 1), Fraction(10, 1), Fraction(0, 1)]
+			"last_conditions": [(">", Q(0, 1)), (">=", Q(0, 1)), ("<", Q(3, 2)), ("<=", Q(2, 1))],
+			"matrix": np.array([
+				[Q(1, 1), Q(2, 1), Q(-3, 1), Q(-1, 1)],
+				[Q(1, 1), Q(3, 1), Q(-2, 1), Q(0, 1)], 
+				[Q(-4, 1), Q(-1, 1), Q(10, 1), Q(0, 1)], 
+				[Q(1, 1), Q(-4, 1), Q(10, 1), Q(0, 1)]
 			]),
 			"inequalities": [">", "<=", "<", ">="],
-			"constants": np.array([Fraction(4, 1), Fraction(0, 1), Fraction(-7, 1), Fraction(7, 2)])
+			"constants": np.array([Q(4, 1), Q(0, 1), Q(-7, 1), Q(7, 2)])
 		}
 		for k, v in test_dict.items():
 			self.assertTrue(np.array_equal(v, dummy.get_data()[k]))
 
+
 if __name__ == "__main__":
-	reader = InputParser('input')
+	test_info = {"data_type": "file", "data": "test_init"}
+	test = SimplexSolver(test_info)
+	
 	unittest.main()
