@@ -1,6 +1,12 @@
 import numpy as np
 from fractions import Fraction as Q
 
+def prmatr(m):
+	for i in m:
+		for j in i:
+			print(j, end=" ")
+		print()
+
 class InputParser:
 	"""Reads file from input_path (parameter) and returns 
 	its content via get_data()"""
@@ -154,6 +160,7 @@ class Solver:
 	def __init__(self, input_data):
 		if input_data['data_type'] == "file":
 			reader_data = InputParser(input_data["data"]).get_data()
+			# print(reader_data)
 			self.objective_function = reader_data["objective_function"]
 			self.task_type = reader_data["task_type"]
 			self.last_conditions = reader_data["last_conditions"]
@@ -163,26 +170,44 @@ class Solver:
 		else:
 			print("This part has not been implemented yet")
 		self.col_num = 0
-		self.row_num = 2
+		self.row_num = 0
 
-	def make_basis_column(self):
-		if self.matrix[self.row_num, self.col_num] == 0:
+	def _make_basis_column(self):
+		"""Метод, що зводить задану в атрибутах колонку до одиничного вектора
+		з одиницею на місці обраного в атрибутах рядка"""
+		if self.matrix[self.row_num][self.col_num] == 0:
 			print("Unexpected zero during basis making")
 			return
-		elif self.matrix[self.row_num, self.col_num] != 1:
-			self.matrix[self.row_num] /= self.matrix[self.row_num, self.col_num]
+		elif self.matrix[self.row_num][self.col_num] != 1:
+			self.matrix[self.row_num] /= self.matrix[self.row_num][self.col_num]
 		
 		chosen_row = self.matrix[self.row_num]
 		for i in [x for x in range(len(self.matrix)) if x != self.row_num]:
-			self.matrix[i] -= chosen_row * self.matrix[i, self.col_num]
+			self.matrix[i] -= chosen_row * self.matrix[i][self.col_num]
 
+	def _make_conditions_equalities(self):
+		"""Метод, що зводить всі нерівності умов до рівностей
+		На даний момент не підтримуються строгі нерівності"""
+		for i in range(len(self.inequalities)):
+			if self.inequalities[i] == "<" or self.inequalities[i] == ">":
+				print("This type of condition is not supported yet")
+			elif self.inequalities[i] == ">=":
+				self.matrix[i] *= Q(-1)
+				self.inequalities[i] = "<="
+			if self.inequalities[i] == "<=":
+				temp_matrix = []
+				for j in range(len(self.matrix)):
+					temp_matrix.append([Q(0)] * (len(self.matrix[0]) + 1))
+				temp_matrix[i][-1] = Q(1)
+				temp_matrix = np.array(temp_matrix)
+				temp_matrix[:,:-1] = self.matrix
+				self.matrix = temp_matrix
+				self.inequalities[i] = "="
 
 class SimplexSolver(Solver):
 	"""Клас, що виконує розв'язання задачі лінійного програмування симплекс методом"""
 	def __init__(self, input_data):
 		super(SimplexSolver, self).__init__(input_data)
-		self.make_basis_column()
-		
 
 
 # ------ Test section ------
@@ -202,10 +227,10 @@ class TestParserMethods(unittest.TestCase):
 			"task_type": "max",
 			"last_conditions": [(">", Q(0, 1)), (">=", Q(0, 1)), ("<", Q(3, 2)), ("<=", Q(2, 1))],
 			"matrix": np.array([
-				[Q(1, 1), Q(2, 1), Q(-3, 1), Q(-1, 1)],
-				[Q(1, 1), Q(3, 1), Q(-2, 1), Q(0, 1)], 
-				[Q(-4, 1), Q(-1, 1), Q(10, 1), Q(0, 1)], 
-				[Q(1, 1), Q(-4, 1), Q(10, 1), Q(0, 1)]
+				[1, 2, -3, -1],
+				[1, 3, -2, 0], 
+				[-4, -1, 10, 0], 
+				[1, -4, 10, 0]
 			]),
 			"inequalities": [">", "<=", "<", ">="],
 			"constants": np.array([Q(4, 1), Q(0, 1), Q(-7, 1), Q(7, 2)])
@@ -213,9 +238,40 @@ class TestParserMethods(unittest.TestCase):
 		for k, v in test_dict.items():
 			self.assertTrue(np.array_equal(v, dummy.get_data()[k]))
 
+class TestCommonLinearMethods(unittest.TestCase):
+	"""Tests for base Solver class"""
+	def __init__(self, *args, **kwargs):
+		super(TestCommonLinearMethods, self).__init__(*args, **kwargs)
+		self.input_info = {"data_type": "file", "data": "test_init"}
+		self.input_info_main = {"data_type": "file", "data": "input"}
+
+	def test_making_unit_basis(self):
+		"""Тест на перевірку коректної роботи методу зведення стовпчика до одиничного вектора"""
+		dummy = SimplexSolver(self.input_info)
+		dummy._make_basis_column()
+		test_matrix = np.array([
+		 	[1, 2, -3, -1],
+		 	[0, 1, 1, 1],
+		 	[0, 7, -2, -4],
+		 	[0, -6, 13, 1]
+		 ])
+		self.assertTrue(np.array_equal(test_matrix, dummy.matrix))
+
+	def test_making_equalities_in_conditions(self):
+		"""Тест на перевірку коректної роботи методу зведення нерівностей умов до рівностей"""
+		dummy = SimplexSolver(self.input_info)
+		for i in range(len(dummy.inequalities)):
+			if len(dummy.inequalities[i]) == 1:
+				dummy.inequalities[i] = ">=" if i % 2 == 0 else "<="
+		before_test = dummy.matrix
+		dummy._make_conditions_equalities()
+		self.assertTrue(len(before_test[0]) + 4, len(dummy.matrix[0]))
+		self.assertTrue(np.array_equal(np.array([
+			[-1, -2, 3, 1, 1, 0, 0, 0],
+			[1, 3, -2, 0, 0, 1, 0, 0],
+			[4, 1, -10, 0, 0, 0, 1, 0],
+			[-1, 4, -10, 0, 0, 0, 0, 1]
+		]), dummy.matrix))
 
 if __name__ == "__main__":
-	test_info = {"data_type": "file", "data": "test_init"}
-	test = SimplexSolver(test_info)
-	
 	unittest.main()
