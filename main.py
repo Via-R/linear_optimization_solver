@@ -1,8 +1,5 @@
-from linearsolver import Solver
+from linearsolver import SimplexSolver
 
-# input_info = {"data_type": "file", "data": "path/to/temp/file"}
-# solver = Solver(input_info)
-
-test = [x for x in [0] * 3]
-
-print(test)
+input_info = {"data_type": "file", "data": "input"}
+solver = SimplexSolver(input_info)
+solver.solve()

@@ -8,14 +8,14 @@ def prmatr(m):
 		print()
 
 class InputParser:
-	"""Reads file from input_path (parameter) and returns 
-	its content via get_data()"""
+	"""Клас для оброблення вхідної інформації з файлу або об'єкту
+	Повертає оброблену інформацію через метод get_data()"""
 	op_list = ["<=", ">=", "<", ">", "=", "arbitrary"]
 	var_quantity = 0
 
 	def __init__(self, input_path):
 		with open(input_path) as f:
-			#parsing first line goes here
+			#Обробка першого рядка з цільовою функцією
 			first_line = f.readline()
 			while(first_line[0] == "#" or first_line[0] == "\n"):
 				first_line = f.readline()
@@ -33,7 +33,7 @@ class InputParser:
 					last_line = line
 					break
 				
-				#parsing main matrix goes here
+				#Обробка умов та заповнення відповідної їм матриці
 				line = InputParser._format_to_math_form(line[1:])
 				for i in InputParser.op_list:
 					if i in line:
@@ -64,26 +64,26 @@ class InputParser:
 			self.main_matrix = np.array(raw_matrix)
 			self.constants_vector = np.array(raw_constants)
 
-			#parsing last line goes here
+			#Обробка останнього рядка з обмеженнями змінних
 			self.last_line_vect = self._parse_last_line(last_line.replace(' ',''))
 
 	@staticmethod
 	def _format_to_math_form(line):
-		"""Removes all spaces and adds omitted 'ones' in a given line"""
+		"""Функція, що видаляє з рядка всі пробіли та додає одиничні множники де потрібно"""
 		if line[0] == "x":
 			line = "1" + line
 		return line.replace(' ', '').replace('-x', '-1x').replace('+x', '+1x')
 
 	def _parse_first_line(self, line):
-		"""Gets a line and parses it into data concerning objective function
-		Form of output: |numpy array of Qs| [ { factor's fraction }, ... ]
-		Index of each Q represents decremented index of corresponding variable
-		Doesn't support error handling and constant terms"""
+		"""Метод, що отримує строку та обробляє її текст як інформацію про цільову функцію
+		Форма виводу: |numpy array of Qs| [ { factor's fraction }, ... ]
+		Індекс кожного Q відповідає декрементованому індексу відповідної змінної
+		Не підтримує некоректну вхідну інформацію та константи в цільовій функції"""
 
-		raw_array = {} #basically it's a resulting array, but without order
+		raw_array = {} #Результуючий масив, але невпорядкований
 
-		#Dividing the line using "+" as delimeter with further writing into the first line model named first_line_vect
-		#Task_type model contains a string ("max" or "min"), depending on an input info
+		#Розділення строки, використовуючи "+" як розділювач, з подальшим записом інформації в модель цільової функції в змінній first_line_vect
+		#Змінна task_type містить строку ("max" або "min"), в залежності від вхідних даних
 		line, task_type = line[:line.find("=>")], line[line.find("=>")+2:-1]
 		line = line[0] + line[1:].replace('-', '+-')
 		op_arr = line.split('+')
@@ -97,10 +97,10 @@ class InputParser:
 		return task_type, np.array(first_line_vect)
 
 	def _parse_last_line(self, line):
-		"""Gets a line and parses it into data concerning variables' conditions
-		Form of output: |list of tuples| [ ( { index of inequality sign }, { condition's fraction } ), ... ]
-		Index of each tuple represents decremented index of corresponding variable
-		Expects variables not to have minus near them"""
+		"""Метод, що отримує строку та обробляє її як таку, що містить інформацію про загальні умови
+		Форма виводу: |list of tuples| [ ( { index of inequality sign }, { condition's fraction } ), ... ]
+		Індекс кожної пари відповідає декрементованому індексу відповідної змінної 
+		Змінні не мають бути написані зі знаком "-" """
 		cond_list = line.split(",")
 		
 		raw_dict = {}
@@ -118,7 +118,7 @@ class InputParser:
 		return last_line_vect	
 
 	def get_data(self):
-		"""Returns a dictionary of the info that was parsed from the input file"""
+		"""Повертає об'єкт з усією обробленою інформацією, що була отримана з файлу"""
 		return {
 			"objective_function": self.first_line_vect,
 			"task_type": self.task_type,
@@ -129,26 +129,27 @@ class InputParser:
 		}
 
 	def print_first_line(self):
-		"""Prints out vector of objective function data"""
+		"""Виводить вектор цільової функції"""
 		print("First line: {}\n".format(self.first_line_vect))
 
 	def print_task_type(self):
+		"""Виводить тип задачі"""
 		print("Task type: {}\n".format(self.task_type))
 
 	def print_last_line(self):
-		"""Prints out list of variables' conditions"""
+		"""Виводить вектор обмежень змінних"""
 		print("Last line: {}\n".format(self.last_line_vect))
 
 	def print_main_matrix(self):
-		"""Prints out main matrix"""
+		"""Виводить основну матрицю"""
 		print("Matrix: {}\n".format(self.main_matrix))
 
 	def print_constants(self):
-		"""Prints out a vector of conditions' constants"""
+		"""Виводить вектор вільних змінних"""
 		print("Constants' vector: {}\n".format(self.constants_vector))
 
 	def print_inequalities(self):
-		"""Prints out a list of inequality signs that concern the condition rows with corresponding decremented indexes"""
+		"""Виводить вектор знаків рівності\нерівності з системи початкових умов"""
 		print("Inequalities' vector: {}\n".format(self.inequalities))
 
 
@@ -171,6 +172,7 @@ class Solver:
 			print("This part has not been implemented yet")
 		self.col_num = 0
 		self.row_num = 0
+		self.basis = []
 
 	def _make_basis_column(self):
 		"""Метод, що зводить задану в атрибутах колонку до одиничного вектора
@@ -204,10 +206,40 @@ class Solver:
 				self.matrix = temp_matrix
 				self.inequalities[i] = "="
 
+	def _get_basis_vectors_nums(self):
+		"""Метод, що повертає список змінних, чиї вектори входять до одиничної підматриці матриці"""
+		temp_matrix = self.matrix.T
+		result = [-1] * len(temp_matrix[0])
+		for i in range(len(temp_matrix)):
+			num = -1
+			for j in range(len(temp_matrix[i])):
+				if temp_matrix[i][j] != 0 and temp_matrix[i][j] != 1:
+					num = -1
+					break
+				if temp_matrix[i][j] == 1:
+					if num == -1:
+						num = j
+					else:
+						num = -1
+						break
+			if num > -1:
+				result[num] = i
+		return result
+
 class SimplexSolver(Solver):
 	"""Клас, що виконує розв'язання задачі лінійного програмування симплекс методом"""
 	def __init__(self, input_data):
 		super(SimplexSolver, self).__init__(input_data)
+
+	def solve(self):
+		"""Розв'язує задачу симплекс методом"""
+		self._make_conditions_equalities()
+		self.basis = self._get_basis_vectors_nums()
+		for i in self.basis:
+			if i == -1:
+				print("Для подальших обчислень необхідна наявність одиничної підматриці")
+				return
+		
 
 
 # ------ Test section ------
@@ -239,7 +271,7 @@ class TestParserMethods(unittest.TestCase):
 			self.assertTrue(np.array_equal(v, dummy.get_data()[k]))
 
 class TestCommonLinearMethods(unittest.TestCase):
-	"""Tests for base Solver class"""
+	"""Тести для класу Solver"""
 	def __init__(self, *args, **kwargs):
 		super(TestCommonLinearMethods, self).__init__(*args, **kwargs)
 		self.input_info = {"data_type": "file", "data": "test_init"}
@@ -272,6 +304,25 @@ class TestCommonLinearMethods(unittest.TestCase):
 			[4, 1, -10, 0, 0, 0, 1, 0],
 			[-1, 4, -10, 0, 0, 0, 0, 1]
 		]), dummy.matrix))
+
+	def test_getting_basis_vectors_nums(self):
+		"""Тест на перевірку коректної роботи методу отримання номерів змінних, що входять в базис"""
+		dummy = SimplexSolver(self.input_info)
+		correct_matrix = np.array([
+			[2, 0, 0, 1],
+			[2, 0, 1, 0],
+			[2, 1, 0, 0]
+		])
+		incorrect_matrix = np.array([
+			[3, 0, 0, 0],
+			[3, 1, 1, 0],
+			[3, 1, 2, 0],
+			[3, 1, 0, 0]
+		])
+		dummy.matrix = correct_matrix
+		self.assertTrue(np.array_equal(np.array([3, 2, 1]), dummy._get_basis_vectors_nums()))
+		dummy.matrix = incorrect_matrix
+		self.assertTrue(np.array_equal(np.array([-1, -1, -1, -1]), dummy._get_basis_vectors_nums()))
 
 if __name__ == "__main__":
 	unittest.main()
