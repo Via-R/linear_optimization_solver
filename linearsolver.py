@@ -2,6 +2,7 @@ import numpy as np
 from fractions import Fraction as Q
 
 def prmatr(m):
+	"""Виводить матрицю у звичайному вигляді, без технічних символів та слів"""
 	for i in m:
 		for j in i:
 			print(j, end=" ")
@@ -11,7 +12,7 @@ class InputParser:
 	"""Клас для оброблення вхідної інформації з файлу або об'єкту
 	Повертає оброблену інформацію через метод get_data()"""
 	op_list = ["<=", ">=", "<", ">", "=", "arbitrary"]
-	var_quantity = 0
+	
 
 	def __init__(self, input_path):
 		with open(input_path) as f:
@@ -53,12 +54,13 @@ class InputParser:
 					raw_list[k - 1] = v
 				raw_matrix.append(raw_list)
 
+			self.var_quantity = 0
 			for row in raw_matrix:
-				if len(row) > InputParser.var_quantity:
-					InputParser.var_quantity = len(row)
+				if len(row) > self.var_quantity:
+					self.var_quantity = len(row)
 			for k, row in enumerate(raw_matrix):
-				if len(row) < InputParser.var_quantity:
-					for i in range(len(row), InputParser.var_quantity):
+				if len(row) < self.var_quantity:
+					for i in range(len(row), self.var_quantity):
 						raw_matrix[k].append(Q(0, 1))
 
 			self.main_matrix = np.array(raw_matrix)
@@ -69,13 +71,13 @@ class InputParser:
 
 	@staticmethod
 	def _format_to_math_form(line):
-		"""Функція, що видаляє з рядка всі пробіли та додає одиничні множники де потрібно"""
+		"""Видаляє з рядка всі пробіли та додає одиничні множники де потрібно"""
 		if line[0] == "x":
 			line = "1" + line
 		return line.replace(' ', '').replace('-x', '-1x').replace('+x', '+1x')
 
 	def _parse_first_line(self, line):
-		"""Метод, що отримує строку та обробляє її текст як інформацію про цільову функцію
+		"""Отримує строку та обробляє її текст як інформацію про цільову функцію
 		Форма виводу: |numpy array of Qs| [ { factor's fraction }, ... ]
 		Індекс кожного Q відповідає декрементованому індексу відповідної змінної
 		Не підтримує некоректну вхідну інформацію та константи в цільовій функції"""
@@ -97,7 +99,7 @@ class InputParser:
 		return task_type, np.array(first_line_vect)
 
 	def _parse_last_line(self, line):
-		"""Метод, що отримує строку та обробляє її як таку, що містить інформацію про загальні умови
+		"""Отримує строку та обробляє її як таку, що містить інформацію про загальні умови
 		Форма виводу: |list of tuples| [ ( { index of inequality sign }, { condition's fraction } ), ... ]
 		Індекс кожної пари відповідає декрементованому індексу відповідної змінної 
 		Змінні не мають бути написані зі знаком "-" """
@@ -173,22 +175,25 @@ class Solver:
 		self.col_num = 0
 		self.row_num = 0
 		self.basis = []
+		self.basis_koef = np.array([])
 
 	def _make_basis_column(self):
-		"""Метод, що зводить задану в атрибутах колонку до одиничного вектора
+		"""Зводить задану в атрибутах колонку до одиничного вектора
 		з одиницею на місці обраного в атрибутах рядка"""
 		if self.matrix[self.row_num][self.col_num] == 0:
 			print("Unexpected zero during basis making")
 			return
 		elif self.matrix[self.row_num][self.col_num] != 1:
+			self.constants[self.row_num] /= self.matrix[self.row_num][self.col_num]
 			self.matrix[self.row_num] /= self.matrix[self.row_num][self.col_num]
 		
 		chosen_row = self.matrix[self.row_num]
 		for i in [x for x in range(len(self.matrix)) if x != self.row_num]:
+			self.constants[i] -= self.constants[self.row_num] * self.matrix[i][self.col_num]
 			self.matrix[i] -= chosen_row * self.matrix[i][self.col_num]
 
 	def _make_conditions_equalities(self):
-		"""Метод, що зводить всі нерівності умов до рівностей
+		"""Зводить всі нерівності умов до рівностей
 		На даний момент не підтримуються строгі нерівності"""
 		for i in range(len(self.inequalities)):
 			if self.inequalities[i] == "<" or self.inequalities[i] == ">":
@@ -207,7 +212,7 @@ class Solver:
 				self.inequalities[i] = "="
 
 	def _get_basis_vectors_nums(self):
-		"""Метод, що повертає список змінних, чиї вектори входять до одиничної підматриці матриці"""
+		"""Повертає список змінних, чиї вектори входять до одиничної підматриці матриці"""
 		temp_matrix = self.matrix.T
 		result = [-1] * len(temp_matrix[0])
 		for i in range(len(temp_matrix)):
@@ -226,20 +231,107 @@ class Solver:
 				result[num] = i
 		return result
 
+	def _set_basis_koef(self):
+		"""Записує коефіцієнти базисних змінних в цільовій функції в окремий вектор"""
+		self.basis[self.row_num] = self.col_num
+		self.basis_koef[self.row_num] = self.objective_function[self.col_num]
+
+	def _expand_objective_function_if_needed(self):
+		"""Додає в цільову функцію штучні змінні з нульовим коефіцієнтом"""
+		diff = len(self.matrix[0]) - len(self.objective_function)
+		if diff > 0:
+			num = len(self.objective_function)
+			temp_array = [Q(0)] * (num + diff)
+			temp_array[:num] = self.objective_function
+			self.objective_function = np.array(temp_array)
+
 class SimplexSolver(Solver):
-	"""Клас, що виконує розв'язання задачі лінійного програмування симплекс методом"""
+	"""Виконує розв'язання задачі лінійного програмування симплекс методом"""
 	def __init__(self, input_data):
 		super(SimplexSolver, self).__init__(input_data)
+		self.deltas = np.array([])
+		self.thetas = np.array([])
+
+	def print_all(self):
+		"""Виводить всю доступну на даний момент інформацію про розвиток розв'язку задачі"""
+		print(">------------------------------------------------------------<")
+		print("Objective func: {}".format(self.objective_function))
+		print("Basis constants: {}".format(self.basis_koef))
+		print("Basis variables: {}".format(self.basis))
+		print("Main matrix:\n-------------------------------")
+		prmatr(self.matrix)
+		print("-------------------------------\nConstants: {}".format(self.constants))
+		print("Thetas: {}".format(self.thetas))
+		print("Deltas: {}".format(self.deltas))
+		print(">------------------------------------------------------------<\n")
+
+	def _count_deltas(self):
+		"""Розраховує вектор з дельтами"""
+		temp_matrix = self.matrix.T
+		temp_array = []
+		for i in range(len(temp_matrix)):
+			temp_array.append(self.objective_function[i] - temp_matrix[i].dot(self.basis_koef))
+		self.deltas = np.array(temp_array)
+
+	def _count_thetas(self):
+		"""Розраховує вектор-стовпчик з відношеннями "тета" """
+		self.thetas = self.constants / self.matrix.T[self.col_num]
+
+	def _find_ind_of_min_theta(self):
+		"""Знаходить індекс ведучого рядка, або повертає -1 якщо такого немає"""
+		temp_min = 0
+		min_set = False
+		found_ind = -1
+		for i in range(len(self.thetas)):
+			if self.thetas[i] >= 0:
+				temp_min = self.thetas[i]
+				found_ind = i
+				min_set = True
+				break
+		if min_set:
+			for i in range(len(self.thetas)):
+				if self.thetas[i] < 0:
+					continue
+				if self.thetas[i] < temp_min:
+					temp_min = self.thetas[i]
+					found_ind = i
+		return found_ind
 
 	def solve(self):
 		"""Розв'язує задачу симплекс методом"""
+		self.initial_variables_quantity = len(self.matrix[0])
 		self._make_conditions_equalities()
 		self.basis = self._get_basis_vectors_nums()
 		for i in self.basis:
 			if i == -1:
 				print("Для подальших обчислень необхідна наявність одиничної підматриці")
 				return
-		
+		self.basis_koef = np.array([0] * len(self.basis))
+		self._expand_objective_function_if_needed()
+		for i in range(len(self.basis)):
+			self.basis_koef[i] = self.objective_function[self.basis[i]]
+
+		while True:
+			self._count_deltas()
+			min_delta = min(self.deltas)
+			if min_delta < 0:
+				self.col_num = int(np.where(self.deltas == min_delta)[0])
+				self._count_thetas()
+				self.row_num = self._find_ind_of_min_theta()
+				if self.row_num == -1:
+					print("Всі відношення \"тета\" від'ємні")
+					return
+				self._make_basis_column()
+				self._set_basis_koef()
+				self.print_all()
+			else:
+				break
+		print("Done")
+		final_result = [Q(0)] * len(self.matrix[0])
+		for i in range(len(self.basis)):
+			final_result[i] = self.constants[i]
+		print("Final result (long): {}".format(final_result))
+		print("Final result: {}".format(final_result[:self.initial_variables_quantity]))
 
 
 # ------ Test section ------
@@ -323,6 +415,20 @@ class TestCommonLinearMethods(unittest.TestCase):
 		self.assertTrue(np.array_equal(np.array([3, 2, 1]), dummy._get_basis_vectors_nums()))
 		dummy.matrix = incorrect_matrix
 		self.assertTrue(np.array_equal(np.array([-1, -1, -1, -1]), dummy._get_basis_vectors_nums()))
+
+
+class TestSimplexMethod(unittest.TestCase):
+	"""Тести для класу SimplexSolver"""
+	def __init__(self, *args, **kwargs):
+		super(TestSimplexMethod, self).__init__(*args, **kwargs)
+		self.input_info = {"data_type": "file", "data": "test_init"}
+		self.input_info_main = {"data_type": "file", "data": "input"}
+
+	def test_for_right_solving(self):
+		"""Тест на правильне розв'язання задачі симплекс методом"""
+		dummy = SimplexSolver(self.input_info_main)
+		dummy.solve()
+
 
 if __name__ == "__main__":
 	unittest.main()
