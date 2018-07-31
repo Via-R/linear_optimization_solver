@@ -177,6 +177,9 @@ class Solver:
 		self.basis = []
 		self.basis_koef = np.array([])
 
+		if self.task_type == "max":
+			self.objective_function *= Q(-1)
+
 	def _make_basis_column(self):
 		"""Зводить задану в атрибутах колонку до одиничного вектора
 		з одиницею на місці обраного в атрибутах рядка"""
@@ -200,6 +203,7 @@ class Solver:
 				print("This type of condition is not supported yet")
 			elif self.inequalities[i] == ">=":
 				self.matrix[i] *= Q(-1)
+				self.constants[i] *= Q(-1)
 				self.inequalities[i] = "<="
 			if self.inequalities[i] == "<=":
 				temp_matrix = []
@@ -297,6 +301,27 @@ class SimplexSolver(Solver):
 					found_ind = i
 		return found_ind
 
+	def _make_constants_positive_if_needed(self):
+		for i in self.constants:
+			if i >= 0:
+				return
+		unset = True
+		for i in range(len(self.constants)):
+			for j in range(len(self.matrix[i])):
+				if self.matrix[i][j] < 0:
+					self.col_num = j
+					self.row_num = i
+					unset = False
+					break
+			if not unset:
+				break
+		if not unset:
+			self._make_basis_column()
+		self.basis = self._get_basis_vectors_nums()
+		for i in range(len(self.basis)):
+			self.basis_koef[i] = self.objective_function[self.basis[i]]
+
+
 	def solve(self):
 		"""Розв'язує задачу симплекс методом"""
 		self.initial_variables_quantity = len(self.matrix[0])
@@ -310,10 +335,12 @@ class SimplexSolver(Solver):
 		self._expand_objective_function_if_needed()
 		for i in range(len(self.basis)):
 			self.basis_koef[i] = self.objective_function[self.basis[i]]
+		self._make_constants_positive_if_needed()
 
 		while True:
 			self._count_deltas()
 			min_delta = min(self.deltas)
+			print(self.deltas)
 			if min_delta < 0:
 				self.col_num = int(np.where(self.deltas == min_delta)[0])
 				self._count_thetas()
@@ -329,10 +356,13 @@ class SimplexSolver(Solver):
 		print("Done")
 		final_result = [Q(0)] * len(self.matrix[0])
 		for i in range(len(self.basis)):
-			final_result[i] = self.constants[i]
+			final_result[self.basis[i]] = self.constants[i]
 		print("Final result (long): {}".format(final_result))
 		print("Final result: {}".format(final_result[:self.initial_variables_quantity]))
-
+		obj_func_val = self.objective_function.dot(np.array(final_result))
+		if self.task_type == "max":
+			obj_func_val *= -1
+		print("Function value: {}".format(obj_func_val))
 
 # ------ Test section ------
 
