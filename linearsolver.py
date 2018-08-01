@@ -13,61 +13,90 @@ class InputParser:
 	Повертає оброблену інформацію через метод get_data()"""
 	op_list = ["<=", ">=", "<", ">", "=", "arbitrary"]
 	
+	def __init__(self, input_info):
+		inner_text = ""
+		if input_info["data_type"] == "file":
+			with open(input_info["data"]) as f:
+				inner_text = f.read()
+		elif input_info["data_type"] == "string":
+			inner_text = input_info["data"]
+		else:
+			print("Unknown format of input data")
 
-	def __init__(self, input_path):
-		with open(input_path) as f:
-			#Обробка першого рядка з цільовою функцією
-			first_line = f.readline()
-			while(first_line[0] == "#" or first_line[0] == "\n"):
-				first_line = f.readline()
-			first_line = InputParser._format_to_math_form(first_line)
-			self.task_type, self.first_line_vect = self._parse_first_line(first_line)
+		inner_text = inner_text.split("\n")
 
-			last_line = ''
-			raw_matrix = []
-			raw_constants = []
-			self.inequalities = []
-			for line in f:
-				if line[0] == '\n' or line[0] == "#":
-					continue
-				elif line[0] != '|':
-					last_line = line
+		#Обробка першого рядка з цільовою функцією
+		counter = 0
+		first_line = inner_text[counter]
+		while(first_line == '' or first_line[0] == '#'):
+			counter += 1
+			first_line = inner_text[counter]
+		first_line = InputParser._format_to_math_form(first_line)
+		self.task_type, self.first_line_vect = self._parse_first_line(first_line)
+
+		last_cond = ''
+		raw_matrix = []
+		raw_constants = []
+		self.inequalities = []
+		for line in inner_text[counter + 1:]:
+			if line == '' or line[0] == "#":
+				continue
+			elif line[0] != '|':
+				last_cond = line
+				break
+			
+			#Обробка умов та заповнення відповідної їм матриці
+			line = InputParser._format_to_math_form(line[1:])
+			for i in InputParser.op_list:
+				if i in line:
+					self.inequalities.append(i)
 					break
-				
-				#Обробка умов та заповнення відповідної їм матриці
-				line = InputParser._format_to_math_form(line[1:])
-				for i in InputParser.op_list:
-					if i in line:
-						self.inequalities.append(i)
-						break
-				curr_sym = self.inequalities[len(self.inequalities)-1]
-				line = line[0] + line[1:line.find(curr_sym)].replace("-", "+-") + line[line.find(curr_sym):]
+			curr_sym = self.inequalities[len(self.inequalities)-1]
+			line = line[0] + line[1:line.find(curr_sym)].replace("-", "+-") + line[line.find(curr_sym):]
 
-				parts_arr,  constant = line[:line.find(curr_sym)].split("+"), line[line.find(curr_sym)+len(curr_sym):]
-				raw_constants.append(Q(constant))
-				raw_dict = {}
-				for i in parts_arr:
-					num, ind = i[:-1].split("x[")
-					raw_dict[int(ind)] = Q(num)
-				raw_list = [0] * max(raw_dict, key=int)
-				for k, v in raw_dict.items():
-					raw_list[k - 1] = v
-				raw_matrix.append(raw_list)
+			parts_arr,  constant = line[:line.find(curr_sym)].split("+"), line[line.find(curr_sym)+len(curr_sym):]
+			raw_constants.append(Q(constant))
+			raw_dict = {}
+			for i in parts_arr:
+				num, ind = i[:-1].split("x[")
+				raw_dict[int(ind)] = Q(num)
+			raw_list = [0] * max(raw_dict, key=int)
+			for k, v in raw_dict.items():
+				raw_list[k - 1] = v
+			raw_matrix.append(raw_list)
 
-			self.var_quantity = 0
-			for row in raw_matrix:
-				if len(row) > self.var_quantity:
-					self.var_quantity = len(row)
-			for k, row in enumerate(raw_matrix):
-				if len(row) < self.var_quantity:
-					for i in range(len(row), self.var_quantity):
-						raw_matrix[k].append(Q(0, 1))
+		self.var_quantity = 0
+		for row in raw_matrix:
+			if len(row) > self.var_quantity:
+				self.var_quantity = len(row)
+		for k, row in enumerate(raw_matrix):
+			if len(row) < self.var_quantity:
+				for i in range(len(row), self.var_quantity):
+					raw_matrix[k].append(Q(0, 1))
 
-			self.main_matrix = np.array(raw_matrix)
-			self.constants_vector = np.array(raw_constants)
+		self.main_matrix = np.array(raw_matrix)
+		self.constants_vector = np.array(raw_constants)
 
-			#Обробка останнього рядка з обмеженнями змінних
-			self.last_line_vect = self._parse_last_line(last_line.replace(' ',''))
+		#Обробка рядка з обмеженнями змінних
+		self.last_conditions = self._parse_last_cond(last_cond.replace(' ',''))
+
+		#Обробка рядка з бажаним результатом розв'язку (використовується лише в тестуванні)
+		self.result_list = []
+		self.result = ""
+		counter = inner_text.index(last_cond) + 1
+		last_line = ""
+		if counter < len(inner_text):
+			last_line = inner_text[counter]
+		while(counter < len(inner_text) - 1 and last_line[:3] != '>>>'):
+			counter += 1
+			last_line = inner_text[counter]
+		if counter >= len(inner_text) - 1 and last_line[:3] != '>>>':
+			return
+		last_line = last_line.replace(' ', '')
+		raw_list, result = self._parse_results(last_line)
+		for i in raw_list.split(','):
+			self.result_list.append(Q(i))
+		self.result = result
 
 	@staticmethod
 	def _format_to_math_form(line):
@@ -86,7 +115,7 @@ class InputParser:
 
 		#Розділення строки, використовуючи "+" як розділювач, з подальшим записом інформації в модель цільової функції в змінній first_line_vect
 		#Змінна task_type містить строку ("max" або "min"), в залежності від вхідних даних
-		line, task_type = line[:line.find("=>")], line[line.find("=>")+2:-1]
+		line, task_type = line[:line.find("=>")], line[line.find("=>")+2:]
 		line = line[0] + line[1:].replace('-', '+-')
 		op_arr = line.split('+')
 		for i in op_arr:
@@ -98,13 +127,12 @@ class InputParser:
 			first_line_vect[k - 1] = v
 		return task_type, np.array(first_line_vect)
 
-	def _parse_last_line(self, line):
+	def _parse_last_cond(self, line):
 		"""Отримує строку та обробляє її як таку, що містить інформацію про загальні умови
 		Форма виводу: |list of tuples| [ ( { index of inequality sign }, { condition's fraction } ), ... ]
 		Індекс кожної пари відповідає декрементованому індексу відповідної змінної 
 		Змінні не мають бути написані зі знаком "-" """
 		cond_list = line.split(",")
-		
 		raw_dict = {}
 		for expr in cond_list:
 			op_index = 0
@@ -114,20 +142,28 @@ class InputParser:
 					break
 			f_tuple = op_sym, Q(expr[expr.find(op_sym)+len(op_sym):])
 			raw_dict[int(expr[2:expr.find(op_sym)-1])] = f_tuple
-		last_line_vect = [(4, 0)] * max(raw_dict, key=int)
+		last_conditions = [(4, 0)] * max(raw_dict, key=int)
 		for k, v in raw_dict.items():
-			last_line_vect[k - 1] = v
-		return last_line_vect	
+			last_conditions[k - 1] = v
+		return last_conditions	
+
+	def _parse_results(self, line):
+		"""Отримує строку так обробляє її як таку, що містить інформацію про бажаний результат
+		Інформація, отримана з цього методу використовується у тестуванні
+		Форма виводу: |tuple| ( { масив значень відповідних змінних }, { значення цільової функції } )"""
+		return line[line.find("(") + 1:line.find(")")], line[line.find("|") + 1:]
 
 	def get_data(self):
 		"""Повертає об'єкт з усією обробленою інформацією, що була отримана з файлу"""
 		return {
 			"objective_function": self.first_line_vect,
 			"task_type": self.task_type,
-			"last_conditions": self.last_line_vect,
+			"last_conditions": self.last_conditions,
 			"matrix": self.main_matrix,
 			"inequalities": self.inequalities,
 			"constants": self.constants_vector,
+			"expected_vect": self.result_list,
+			"expected_result": self.result
 		}
 
 	def print_first_line(self):
@@ -138,9 +174,9 @@ class InputParser:
 		"""Виводить тип задачі"""
 		print("Task type: {}\n".format(self.task_type))
 
-	def print_last_line(self):
+	def print_last_cond(self):
 		"""Виводить вектор обмежень змінних"""
-		print("Last line: {}\n".format(self.last_line_vect))
+		print("Last line: {}\n".format(self.last_conditions))
 
 	def print_main_matrix(self):
 		"""Виводить основну матрицю"""
@@ -161,17 +197,19 @@ class Solver:
 	"""Основний клас, що містить спільні для всіх способів розв'язання методи та є базовим для класів,
 	які відповідають різним способам розв'язання"""
 	def __init__(self, input_data):
-		if input_data['data_type'] == "file":
-			reader_data = InputParser(input_data["data"]).get_data()
-			# print(reader_data)
+		if input_data['data_type'] != "object":
+			reader_data = InputParser(input_data).get_data()
 			self.objective_function = reader_data["objective_function"]
 			self.task_type = reader_data["task_type"]
 			self.last_conditions = reader_data["last_conditions"]
 			self.matrix = reader_data["matrix"]
 			self.inequalities = reader_data["inequalities"]
 			self.constants = reader_data["constants"]
+			self.expected_vect = np.array(reader_data["expected_vect"])
+			self.expected_result = Q(reader_data["expected_result"]) if reader_data["expected_result"] != "" else ""
 		else:
 			print("This part has not been implemented yet")
+		self.mute = input_data["mute"]
 		self.col_num = 0
 		self.row_num = 0
 		self.basis = []
@@ -278,8 +316,13 @@ class SimplexSolver(Solver):
 		self.deltas = np.array(temp_array)
 
 	def _count_thetas(self):
-		"""Розраховує вектор-стовпчик з відношеннями "тета" """
-		self.thetas = self.constants / self.matrix.T[self.col_num]
+		"""Розраховує вектор-стовпчик з відношеннями "тета"
+		Повертає False, якщо цільова функція необмежена на допустимій області"""
+		if np.count_nonzero(self.matrix.T[self.col_num]) == len(self.matrix.T[self.col_num]):
+			self.thetas = self.constants / self.matrix.T[self.col_num]
+		else:
+			return False
+		return True
 
 	def _find_ind_of_min_theta(self):
 		"""Знаходить індекс ведучого рядка, або повертає -1 якщо такого немає"""
@@ -302,6 +345,7 @@ class SimplexSolver(Solver):
 		return found_ind
 
 	def _make_constants_positive_if_needed(self):
+		"""Якщо всі вільні члени від'ємні, то переходить до іншого базису"""
 		for i in self.constants:
 			if i >= 0:
 				return
@@ -321,6 +365,19 @@ class SimplexSolver(Solver):
 		for i in range(len(self.basis)):
 			self.basis_koef[i] = self.objective_function[self.basis[i]]
 
+	def _add_artificial_basis(self):
+		"""Створює одиничну підматрицю за допомогою штучних змінних М-методом"""
+		M = np.amax(np.array(np.append(np.append(self.matrix, self.constants), self.objective_function))) + 1
+		for i in range(len(self.basis)):
+			if self.basis[i] == -1:
+				temp_matrix = []
+				for j in range(len(self.matrix)):
+					temp_matrix.append([Q(0)] * (len(self.matrix[0]) + 1))
+				temp_matrix[i][-1] = Q(1)
+				temp_matrix = np.array(temp_matrix)
+				temp_matrix[:,:-1] = self.matrix
+				self.matrix = temp_matrix
+				self.objective_function = np.append(self.objective_function, M)
 
 	def solve(self):
 		"""Розв'язує задачу симплекс методом"""
@@ -329,42 +386,77 @@ class SimplexSolver(Solver):
 		self.basis = self._get_basis_vectors_nums()
 		for i in self.basis:
 			if i == -1:
-				print("Для подальших обчислень необхідна наявність одиничної підматриці")
-				return
+				# print("Для подальших обчислень необхідна наявність одиничної підматриці")
+				self._add_artificial_basis()
+				break
 		self.basis_koef = np.array([0] * len(self.basis))
 		self._expand_objective_function_if_needed()
 		for i in range(len(self.basis)):
 			self.basis_koef[i] = self.objective_function[self.basis[i]]
 		self._make_constants_positive_if_needed()
-
 		while True:
 			self._count_deltas()
 			min_delta = min(self.deltas)
-			print(self.deltas)
 			if min_delta < 0:
 				self.col_num = int(np.where(self.deltas == min_delta)[0])
-				self._count_thetas()
+				if not self._count_thetas():
+					print("Цільова функція необмежена на допустимій області")
+					return
 				self.row_num = self._find_ind_of_min_theta()
 				if self.row_num == -1:
 					print("Всі відношення \"тета\" від'ємні")
 					return
 				self._make_basis_column()
 				self._set_basis_koef()
-				self.print_all()
+				if not self.mute: self.print_all()
 			else:
-				break
-		print("Done")
+				for i in range(len(self.constants)):
+					if self.constants[i] < 0:
+						another_iteration = False
+						for j in range(len(self.matrix[i])):
+							if self.matrix[i][j] < 0:
+								self.row_num = i
+								self.col_num = j
+								self._set_basis_koef()
+								self._make_basis_column()
+								another_iteration  = True
+								break
+						if another_iteration:
+							if not self.mute: self.print_all()
+							break
+						else:
+							print("Неможливо отримати опорний розв'язок")
+							return
+				else:
+					break
 		final_result = [Q(0)] * len(self.matrix[0])
 		for i in range(len(self.basis)):
 			final_result[self.basis[i]] = self.constants[i]
-		print("Final result (long): {}".format(final_result))
-		print("Final result: {}".format(final_result[:self.initial_variables_quantity]))
-		obj_func_val = self.objective_function.dot(np.array(final_result))
+		self.result_vect = final_result[:self.initial_variables_quantity]
+		obj_func_val = self.objective_function[:self.initial_variables_quantity].dot(np.array(final_result[:self.initial_variables_quantity]))
 		if self.task_type == "max":
 			obj_func_val *= -1
-		print("Function value: {}".format(obj_func_val))
+		self.result = obj_func_val
+		if not self.mute: 
+			print("Done")
+			print("Final result (long): {}".format(final_result))
+			print("Final result: {}".format(self.result_vect))
+			print("Function value: {}".format(obj_func_val))
 
 # ------ Test section ------
+
+test_input_string = """
+# Not suitable for calculations 
+
+x[2]+x[3]-2x[1]+223x[4] =>max
+
+|2x[2]+x[1]-3x[3]-x[4]>4
+|-2x[3]+x[1]+3x[2]<=0
+|-x[2]+10x[3]-4x[1]<-7
+|x[1]+10x[3]-4x[2]>=7/2
+
+x[1]>0, x[2]>=0, x[3]<3/2, x[4]<=2
+"""
 
 import unittest
 class TestParserMethods(unittest.TestCase):
@@ -373,9 +465,9 @@ class TestParserMethods(unittest.TestCase):
 		"""Tests for valid expression formatting into a math form"""
 		self.assertEqual(InputParser._format_to_math_form("- 9x[4] + 23x[1] -6x[2]+x[3] - x[5]=>max"), '-9x[4]+23x[1]-6x[2]+1x[3]-1x[5]=>max')
 
-	def test_init(self):
+	def test_input(self):
 		"""Tests for valid parsing of the input file"""
-		dummy = InputParser('test_init')
+		dummy = InputParser({'data_type': 'string','data':test_input_string})
 		test_dict = {
 			"objective_function": np.array([Q(-2, 1), Q(1, 1), Q(1, 1), Q(223, 1)]),
 			"task_type": "max",
@@ -396,8 +488,8 @@ class TestCommonLinearMethods(unittest.TestCase):
 	"""Тести для класу Solver"""
 	def __init__(self, *args, **kwargs):
 		super(TestCommonLinearMethods, self).__init__(*args, **kwargs)
-		self.input_info = {"data_type": "file", "data": "test_init"}
-		self.input_info_main = {"data_type": "file", "data": "input"}
+		self.input_info = {'data_type': 'string','data':test_input_string, "mute": True}
+		self.input_info_main = {"data_type": "file", "data": "input", "mute": True}
 
 	def test_making_unit_basis(self):
 		"""Тест на перевірку коректної роботи методу зведення стовпчика до одиничного вектора"""
@@ -451,13 +543,19 @@ class TestSimplexMethod(unittest.TestCase):
 	"""Тести для класу SimplexSolver"""
 	def __init__(self, *args, **kwargs):
 		super(TestSimplexMethod, self).__init__(*args, **kwargs)
-		self.input_info = {"data_type": "file", "data": "test_init"}
-		self.input_info_main = {"data_type": "file", "data": "input"}
+		self.input_info = {'data_type': 'string','data':test_input_string, "mute": True}
+		self.input_info_main = {"data_type": "file", "data": "input", "mute": True}
 
 	def test_for_right_solving(self):
-		"""Тест на правильне розв'язання задачі симплекс методом"""
-		dummy = SimplexSolver(self.input_info_main)
-		dummy.solve()
+		"""Тест на правильне розв'язання різних задач симплекс методом"""
+		with open("test_input") as f:
+			inner_text = f.read()
+			inner_text = inner_text.split("***")
+			for i in inner_text:
+				dummy = SimplexSolver({"data_type":"string", "data": i, "mute":True})
+				dummy.solve()
+				self.assertTrue(np.array_equal(dummy.expected_vect, dummy.result_vect))
+				self.assertEqual(dummy.expected_result, dummy.result)
 
 
 if __name__ == "__main__":
