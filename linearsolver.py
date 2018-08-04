@@ -23,7 +23,7 @@ class InputParser:
 		else:
 			print("Unknown format of input data")
 
-		inner_text = inner_text.split("\n")
+		inner_text = inner_text.replace('\t', '').split("\n")
 
 		#Обробка першого рядка з цільовою функцією
 		counter = 0
@@ -41,10 +41,13 @@ class InputParser:
 		for line in inner_text[counter + 1:]:
 			if line == '' or line[0] == "#":
 				continue
+			elif line[:3] == ">>>":
+				last_cond = ""
+				break
 			elif line[0] != '|':
 				last_cond = line
 				break
-			
+
 			#Обробка умов та заповнення відповідної їм матриці
 			line = InputParser._format_to_math_form(line[1:])
 			for i in InputParser.op_list:
@@ -79,7 +82,6 @@ class InputParser:
 
 		#Обробка рядка з обмеженнями змінних
 		self.last_conditions = self._parse_last_cond(last_cond.replace(' ',''))
-
 		#Обробка рядка з бажаним результатом розв'язку (використовується лише в тестуванні)
 		self.result_list = []
 		self.result = ""
@@ -132,6 +134,8 @@ class InputParser:
 		Форма виводу: |list of tuples| [ ( { index of inequality sign }, { condition's fraction } ), ... ]
 		Індекс кожної пари відповідає декрементованому індексу відповідної змінної 
 		Змінні не мають бути написані зі знаком "-" """
+		if line == "":
+			return [["arbitrary", Q(0)]] * self.var_quantity	
 		cond_list = line.split(",")
 		raw_dict = {}
 		for expr in cond_list:
@@ -140,12 +144,15 @@ class InputParser:
 				if i in expr:
 					op_sym = i
 					break
-			f_tuple = op_sym, Q(expr[expr.find(op_sym)+len(op_sym):])
-			raw_dict[int(expr[2:expr.find(op_sym)-1])] = f_tuple
-		last_conditions = [(4, 0)] * max(raw_dict, key=int)
+			f_pair = [op_sym, Q(expr[expr.find(op_sym)+len(op_sym):])]
+			raw_dict[int(expr[2:expr.find(op_sym)-1])] = f_pair
+		last_conditions = [[InputParser.op_list[5], Q(0)]] * max(raw_dict, key=int)
 		for k, v in raw_dict.items():
 			last_conditions[k - 1] = v
-		return last_conditions	
+		complete_list = [["arbitrary", Q(0)]] * self.var_quantity
+		complete_list[:len(last_conditions)] = last_conditions
+		
+		return complete_list
 
 	def _parse_results(self, line):
 		"""Отримує строку так обробляє її як таку, що містить інформацію про бажаний результат
@@ -318,11 +325,19 @@ class SimplexSolver(Solver):
 	def _count_thetas(self):
 		"""Розраховує вектор-стовпчик з відношеннями "тета"
 		Повертає False, якщо цільова функція необмежена на допустимій області"""
-		if np.count_nonzero(self.matrix.T[self.col_num]) == len(self.matrix.T[self.col_num]):
-			self.thetas = self.constants / self.matrix.T[self.col_num]
-		else:
-			return False
-		return True
+		#if np.count_nonzero(self.matrix.T[self.col_num]) == len(self.matrix.T[self.col_num]):
+		#	self.thetas = self.constants / self.matrix.T[self.col_num]
+		self.thetas = [Q(0)] * len(self.constants)
+		for i in range(len(self.matrix)):
+			if self.matrix[i][self.col_num] == 0:
+				self.thetas[i] = -1
+			elif self.matrix[i][self.col_num] < 0 and self.constants[i] == 0:
+				self.thetas[i] = -1
+			else:
+				self.thetas[i] = self.constants[i] / self.matrix[i][self.col_num]
+		# else:
+			# return False
+		# return True
 
 	def _find_ind_of_min_theta(self):
 		"""Знаходить індекс ведучого рядка, або повертає -1 якщо такого немає"""
@@ -379,14 +394,100 @@ class SimplexSolver(Solver):
 				self.matrix = temp_matrix
 				self.objective_function = np.append(self.objective_function, M)
 
+	def _normalize_conditions(self):
+		"""Зводить задачу до аналогічної, у якій всі змінні більше або рівні нулю"""
+		self.substitution_queue = []
+		self.arbitrary_pairs = []
+
+		for i in range(len(self.last_conditions)):
+			if len(self.last_conditions[i][0]) == 1:
+				return False
+
+			elif self.last_conditions[i][0] == "<=":
+				for j in range(len(self.matrix)):
+					self.matrix[j][i] *= -1
+				self.substitution_queue.append((i, "*=-1"))
+				self.objective_function[i] *= -1
+				self.last_conditions[i] = [">=", self.last_conditions[i][1] * -1]
+			if self.last_conditions[i][0] == ">=":
+				if self.last_conditions[i][1] != 0:
+					for j in range(len(self.matrix)):
+						self.constants[j] -= self.matrix[j][i] * self.last_conditions[i][1]
+					self.substitution_queue.insert(0, (i, "+={}".format(self.last_conditions[i][1])))
+					self.last_conditions[i][1] = Q(0)
+
+			if self.last_conditions[i][0] == "arbitrary":
+				new_pair = i, len(self.matrix[0])
+				new_matrix = []
+				for j in range(len(self.matrix)):
+					new_matrix.append([Q(0)] * (len(self.matrix[0]) + 1))
+				for j in range(len(self.matrix)):
+					new_matrix[j][-1] = -self.matrix[j][i]
+
+				
+				new_matrix = np.array(new_matrix)
+				new_matrix[:,:-1] = self.matrix
+				self.matrix = new_matrix
+				
+				self.objective_function = np.append(self.objective_function, -self.objective_function[i])
+				self.last_conditions[i] = [">=", Q(0)]
+				self.arbitrary_pairs.append(new_pair)
+
+		return True
+
+	def _cancel_subtitution(self):
+		"""Повертає початкові значення змінним, якщо відбулася заміна"""
+		for i in self.substitution_queue:
+			exec("self.final_result[i[0]]" + i[1])
+			if "*" in i[1]:
+				self.objective_function[i[0]] *= Q(i[1][2:])
+
+		for i in self.arbitrary_pairs:
+			self.final_result[i[0]] -= self.final_result[i[1]]
+
+
+	# def _make_matrix_rectangular(self):
+	# 	"""Після додавання нових змінних до основних умов, додає їх в усі 
+	# 	рядки нерівностей, але з нульовими множниками"""
+	# 	max_len = 0
+	# 	for i in self.matrix:
+	# 		if len(i) > max_len:
+	# 			max_len = len(i)
+	# 	for i in range(len(self.matrix)):
+	# 		if len(self.matrix[i]) < max_len:
+	# 			to_insert = [Q(0)] * (max_len - len(self.matrix[i]))
+	# 			self.matrix[i] = np.append(self.matrix[i], to_insert)
+
+	def _get_col_num(self, indices_list):
+		"""Повертає індекс ведучого стовпчика, засновуючись на векторі з дельтами"""
+		if len(indices_list) == 1:
+			return indices_list[0]
+		for i in range(len(indices_list)):
+			temp_thetas = []
+			for j in range(len(self.matrix)):
+				if self.matrix[j][indices_list[i]] == 0 or (self.constants[j] == 0 and self.matrix[j][indices_list[i]] < 0):
+					temp_thetas.append(-1)
+				else:
+					temp_thetas.append(self.constants[j] / self.matrix[j][indices_list[i]])
+			for j in temp_thetas:
+				if j >= 0:
+					break
+			else:
+				indices_list[i] = -1
+		for i in indices_list:
+			if i >= 0:
+				return i
+		return -1
+
 	def solve(self):
 		"""Розв'язує задачу симплекс методом"""
 		self.initial_variables_quantity = len(self.matrix[0])
+		if not self._normalize_conditions():
+			print("Something's wrong with the last conditions")
 		self._make_conditions_equalities()
 		self.basis = self._get_basis_vectors_nums()
 		for i in self.basis:
 			if i == -1:
-				# print("Для подальших обчислень необхідна наявність одиничної підматриці")
 				self._add_artificial_basis()
 				break
 		self.basis_koef = np.array([0] * len(self.basis))
@@ -394,17 +495,27 @@ class SimplexSolver(Solver):
 		for i in range(len(self.basis)):
 			self.basis_koef[i] = self.objective_function[self.basis[i]]
 		self._make_constants_positive_if_needed()
+
+		safety_counter = 0
 		while True:
+			safety_counter += 1
+			if safety_counter > 100:
+				print("Infinite loop terminated")
+				return
+
 			self._count_deltas()
 			min_delta = min(self.deltas)
 			if min_delta < 0:
-				self.col_num = int(np.where(self.deltas == min_delta)[0])
-				if not self._count_thetas():
-					print("Цільова функція необмежена на допустимій області")
+				self.col_num = self._get_col_num(np.where(self.deltas == min_delta)[0].tolist())
+				if self.col_num == -1:
+					print("Unable to choose a column")
 					return
+				self._count_thetas()
 				self.row_num = self._find_ind_of_min_theta()
 				if self.row_num == -1:
 					print("Всі відношення \"тета\" від'ємні")
+					print("Цільова функція необмежена на допустимій області")
+					self.print_all()
 					return
 				self._make_basis_column()
 				self._set_basis_koef()
@@ -429,17 +540,21 @@ class SimplexSolver(Solver):
 							return
 				else:
 					break
-		final_result = [Q(0)] * len(self.matrix[0])
+		self.final_result = [Q(0)] * len(self.matrix[0])
 		for i in range(len(self.basis)):
-			final_result[self.basis[i]] = self.constants[i]
-		self.result_vect = final_result[:self.initial_variables_quantity]
-		obj_func_val = self.objective_function[:self.initial_variables_quantity].dot(np.array(final_result[:self.initial_variables_quantity]))
+			self.final_result[self.basis[i]] = self.constants[i]
+
 		if self.task_type == "max":
-			obj_func_val *= -1
+			self.objective_function *= -1
+
+		self._cancel_subtitution()
+
+		self.result_vect = self.final_result[:self.initial_variables_quantity]
+		obj_func_val = self.objective_function[:self.initial_variables_quantity].dot(np.array(self.result_vect))
 		self.result = obj_func_val
 		if not self.mute: 
 			print("Done")
-			print("Final result (long): {}".format(final_result))
+			print("Final result (long): {}".format(self.final_result))
 			print("Final result: {}".format(self.result_vect))
 			print("Function value: {}".format(obj_func_val))
 
@@ -538,13 +653,31 @@ class TestCommonLinearMethods(unittest.TestCase):
 		dummy.matrix = incorrect_matrix
 		self.assertTrue(np.array_equal(np.array([-1, -1, -1, -1]), dummy._get_basis_vectors_nums()))
 
-
 class TestSimplexMethod(unittest.TestCase):
 	"""Тести для класу SimplexSolver"""
 	def __init__(self, *args, **kwargs):
 		super(TestSimplexMethod, self).__init__(*args, **kwargs)
 		self.input_info = {'data_type': 'string','data':test_input_string, "mute": True}
 		self.input_info_main = {"data_type": "file", "data": "input", "mute": True}
+
+	def test_for_choosing_column(self):
+		"""Тест для методу, що обирає ведучий стовпчик (_get_col_num)"""
+		dummy = SimplexSolver(self.input_info_main)
+		correct_matrix = np.array([
+			[1, -1, -2],
+			[0, -1, -2],
+			[0, -1, 2]
+		])
+		incorrect_matrix = np.array([
+			[1, -1, -2],
+			[0, -1, -2],
+			[0, -1, -2]
+		])
+		dummy.constants = [0, 1, 1]
+		dummy.matrix = correct_matrix
+		self.assertEqual(2, dummy._get_col_num([1, 2]))
+		dummy.matrix = incorrect_matrix
+		self.assertEqual(-1, dummy._get_col_num([1, 2]))
 
 	def test_for_right_solving(self):
 		"""Тест на правильне розв'язання різних задач симплекс методом"""
@@ -554,9 +687,11 @@ class TestSimplexMethod(unittest.TestCase):
 			for i in inner_text:
 				dummy = SimplexSolver({"data_type":"string", "data": i, "mute":True})
 				dummy.solve()
-				self.assertTrue(np.array_equal(dummy.expected_vect, dummy.result_vect))
 				self.assertEqual(dummy.expected_result, dummy.result)
 
 
 if __name__ == "__main__":
 	unittest.main()
+	# data_to_solve = """"""
+	# dummy = SimplexSolver({"data_type":"string", "data": data_to_solve, "mute":False})
+	# dummy.solve()
