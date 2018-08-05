@@ -23,7 +23,7 @@ class InputParser:
 		else:
 			print("Unknown format of input data")
 
-		inner_text = inner_text.replace('\t', '').split("\n")
+		inner_text = inner_text.replace('\t', '').replace(' ', '').split("\n")
 
 		#Обробка першого рядка з цільовою функцією
 		counter = 0
@@ -81,10 +81,11 @@ class InputParser:
 		self.constants_vector = np.array(raw_constants)
 
 		#Обробка рядка з обмеженнями змінних
-		self.last_conditions = self._parse_last_cond(last_cond.replace(' ',''))
+		self.last_conditions = self._parse_last_cond(last_cond)
 		#Обробка рядка з бажаним результатом розв'язку (використовується лише в тестуванні)
 		self.result_list = []
 		self.result = ""
+		self.expected_error = ""
 		counter = inner_text.index(last_cond) + 1
 		last_line = ""
 		if counter < len(inner_text):
@@ -94,11 +95,13 @@ class InputParser:
 			last_line = inner_text[counter]
 		if counter >= len(inner_text) - 1 and last_line[:3] != '>>>':
 			return
-		last_line = last_line.replace(' ', '')
-		raw_list, result = self._parse_results(last_line)
-		for i in raw_list.split(','):
-			self.result_list.append(Q(i))
+		raw_list, result, expected_error = self._parse_results(last_line)
+		if raw_list != "":
+			for i in raw_list.split(','):
+				self.result_list.append(Q(i))
 		self.result = result
+		self.expected_error = expected_error
+
 
 	@staticmethod
 	def _format_to_math_form(line):
@@ -158,7 +161,9 @@ class InputParser:
 		"""Отримує строку так обробляє її як таку, що містить інформацію про бажаний результат
 		Інформація, отримана з цього методу використовується у тестуванні
 		Форма виводу: |tuple| ( { масив значень відповідних змінних }, { значення цільової функції } )"""
-		return line[line.find("(") + 1:line.find(")")], line[line.find("|") + 1:]
+		if not "(" in line:
+			return "", "", line[3:]
+		return line[line.find("(") + 1:line.find(")")], line[line.find("|") + 1:], ""
 
 	def get_data(self):
 		"""Повертає об'єкт з усією обробленою інформацією, що була отримана з файлу"""
@@ -170,7 +175,8 @@ class InputParser:
 			"inequalities": self.inequalities,
 			"constants": self.constants_vector,
 			"expected_vect": self.result_list,
-			"expected_result": self.result
+			"expected_result": self.result,
+			"error": self.expected_error
 		}
 
 	def print_first_line(self):
@@ -200,6 +206,7 @@ class InputParser:
 
 # ------ Solver class section ------
 
+
 class Solver:
 	"""Основний клас, що містить спільні для всіх способів розв'язання методи та є базовим для класів,
 	які відповідають різним способам розв'язання"""
@@ -214,6 +221,8 @@ class Solver:
 			self.constants = reader_data["constants"]
 			self.expected_vect = np.array(reader_data["expected_vect"])
 			self.expected_result = Q(reader_data["expected_result"]) if reader_data["expected_result"] != "" else ""
+			self.expected_error = reader_data["error"]
+			self.result_error = ""
 		else:
 			print("This part has not been implemented yet")
 		self.mute = input_data["mute"]
@@ -300,6 +309,7 @@ class SimplexSolver(Solver):
 		super(SimplexSolver, self).__init__(input_data)
 		self.deltas = np.array([])
 		self.thetas = np.array([])
+		self.artificial_variables = []
 
 	def print_all(self):
 		"""Виводить всю доступну на даний момент інформацію про розвиток розв'язку задачі"""
@@ -393,6 +403,7 @@ class SimplexSolver(Solver):
 				temp_matrix[:,:-1] = self.matrix
 				self.matrix = temp_matrix
 				self.objective_function = np.append(self.objective_function, M)
+				self.artificial_variables.append(len(self.objective_function) - 1)
 
 	def _normalize_conditions(self):
 		"""Зводить задачу до аналогічної, у якій всі змінні більше або рівні нулю"""
@@ -479,11 +490,32 @@ class SimplexSolver(Solver):
 				return i
 		return -1
 
+	def _check_for_ambiguous_result(self):
+		"""Перевіряє чи відповідає небазисній змінній нульова дельта (якщо штучна змінна базисна, її пара теж вважається базисною)"""
+		basis = set(self.basis)
+		for i in self.arbitrary_pairs:
+			if i[0] in basis:
+				basis.add(i[1])
+			elif i[1] in basis:
+				basis.add(i[0])
+		non_basis_set = set(range(len(self.objective_function))) - basis
+		for i in non_basis_set:
+			if self.deltas[i] == 0:
+				self.result_error = "infinite"
+				raise SolvingError("Базисній змінній відповідає нульова дельта:\nІснує нескінченна кількість розв'язків")
+
+	def _check_for_empty_allowable_area(self):
+		"""Перевіряє чи є у кінцевому векторі з множниками змінних штучна змінна з відмнінним від нуля множником"""
+		for i in self.artificial_variables:
+			if self.final_result[i] != 0:
+				self.result_error = "empty"
+				raise SolvingError("В оптимальному розв'язку присутня штучна змінна:\nДопустима область порожня")
+
 	def solve(self):
 		"""Розв'язує задачу симплекс методом"""
 		self.initial_variables_quantity = len(self.matrix[0])
 		if not self._normalize_conditions():
-			print("Something's wrong with the last conditions")
+			raise SolvingError("В заданих умовах обмеження змінних містять строгі знаки нерівностей або знак рівності - дані вхідні дані некоректні для симплекс методу")
 		self._make_conditions_equalities()
 		self.basis = self._get_basis_vectors_nums()
 		for i in self.basis:
@@ -500,23 +532,20 @@ class SimplexSolver(Solver):
 		while True:
 			safety_counter += 1
 			if safety_counter > 100:
-				print("Infinite loop terminated")
-				return
+				raise SolvingError("Кількість ітерацій завелика, цикл зупинено")
 
 			self._count_deltas()
 			min_delta = min(self.deltas)
 			if min_delta < 0:
 				self.col_num = self._get_col_num(np.where(self.deltas == min_delta)[0].tolist())
 				if self.col_num == -1:
-					print("Unable to choose a column")
-					return
+					self.result_error = "unlimited"
+					raise SolvingError("Неможливо обрати ведучий стовпчик, всі стовпчики з від'ємними дельта утворюють від'ємні тета:\nЦільова функція необмежена на допустимій області")
 				self._count_thetas()
 				self.row_num = self._find_ind_of_min_theta()
 				if self.row_num == -1:
-					print("Всі відношення \"тета\" від'ємні")
-					print("Цільова функція необмежена на допустимій області")
-					self.print_all()
-					return
+					self.result_error = "unlimited"
+					raise SolvingError("Всі тета від'ємні:\nЦільова функція необмежена на допустимій області")
 				self._make_basis_column()
 				self._set_basis_koef()
 				if not self.mute: self.print_all()
@@ -536,8 +565,8 @@ class SimplexSolver(Solver):
 							if not self.mute: self.print_all()
 							break
 						else:
-							print("Неможливо отримати опорний розв'язок")
-							return
+							self.result_error = "empty"
+							raise SolvingError("Неможливо отримати опорний розв'язок, всі дельта не менші нуля, але не всі значення базисних змінних більші рівні нулю:\nДопустима область порожня")
 				else:
 					break
 		self.final_result = [Q(0)] * len(self.matrix[0])
@@ -552,13 +581,25 @@ class SimplexSolver(Solver):
 		self.result_vect = self.final_result[:self.initial_variables_quantity]
 		obj_func_val = self.objective_function[:self.initial_variables_quantity].dot(np.array(self.result_vect))
 		self.result = obj_func_val
+		self._check_for_ambiguous_result()
+		self._check_for_empty_allowable_area()
 		if not self.mute: 
 			print("Done")
 			print("Final result (long): {}".format(self.final_result))
 			print("Final result: {}".format(self.result_vect))
 			print("Function value: {}".format(obj_func_val))
 
+
+# ------ Custom exception section ------
+
+
+class SolvingError(Exception):
+	def __init__(self, message):
+		super().__init__(message)
+
+
 # ------ Test section ------
+
 
 test_input_string = """
 # Not suitable for calculations 
@@ -686,12 +727,28 @@ class TestSimplexMethod(unittest.TestCase):
 			inner_text = inner_text.split("***")
 			for i in inner_text:
 				dummy = SimplexSolver({"data_type":"string", "data": i, "mute":True})
-				dummy.solve()
-				self.assertEqual(dummy.expected_result, dummy.result)
-
+				try:
+					dummy.solve()
+				except SolvingError as err:
+					self.assertEqual(dummy.expected_error, dummy.result_error)
+				else:
+					self.assertEqual(dummy.expected_result, dummy.result)
+					# if dummy.result_error == "":
+					# else:
+						
 
 if __name__ == "__main__":
 	unittest.main()
-	# data_to_solve = """"""
-	# dummy = SimplexSolver({"data_type":"string", "data": data_to_solve, "mute":False})
-	# dummy.solve()
+	data_to_solve = """
+	x[1]+x[2]=>max
+	|x[1]+x[2]<=1
+	|x[1]+x[2]>=2
+	"""
+
+	dummy = SimplexSolver({"data_type":"string", "data": data_to_solve, "mute":False})
+	try:
+		dummy.solve()
+	except SolvingError as err:
+		print(err)
+	else:
+		print("OK")
