@@ -290,7 +290,7 @@ class Solver:
 		return result
 
 	def _set_basis_koef(self):
-		"""Записує коефіцієнти базисних змінних в цільовій функції в окремий вектор"""
+		"""Записує порядкові номери та коефіцієнти базисних змінних в цільовій функції в окремі вектори"""
 		self.basis[self.row_num] = self.col_num
 		self.basis_koef[self.row_num] = self.objective_function[self.col_num]
 
@@ -324,7 +324,7 @@ class SimplexSolver(Solver):
 		print("Deltas: {}".format(self.deltas))
 		print(">------------------------------------------------------------<\n")
 
-	def _count_deltas(self):
+	def _calculate_deltas(self):
 		"""Розраховує вектор з дельтами"""
 		temp_matrix = self.matrix.T
 		temp_array = []
@@ -332,11 +332,9 @@ class SimplexSolver(Solver):
 			temp_array.append(self.objective_function[i] - temp_matrix[i].dot(self.basis_koef))
 		self.deltas = np.array(temp_array)
 
-	def _count_thetas(self):
+	def _calculate_thetas(self):
 		"""Розраховує вектор-стовпчик з відношеннями "тета"
 		Повертає False, якщо цільова функція необмежена на допустимій області"""
-		#if np.count_nonzero(self.matrix.T[self.col_num]) == len(self.matrix.T[self.col_num]):
-		#	self.thetas = self.constants / self.matrix.T[self.col_num]
 		self.thetas = [Q(0)] * len(self.constants)
 		for i in range(len(self.matrix)):
 			if self.matrix[i][self.col_num] == 0:
@@ -345,9 +343,6 @@ class SimplexSolver(Solver):
 				self.thetas[i] = -1
 			else:
 				self.thetas[i] = self.constants[i] / self.matrix[i][self.col_num]
-		# else:
-			# return False
-		# return True
 
 	def _find_ind_of_min_theta(self):
 		"""Знаходить індекс ведучого рядка, або повертає -1 якщо такого немає"""
@@ -456,19 +451,6 @@ class SimplexSolver(Solver):
 		for i in self.arbitrary_pairs:
 			self.final_result[i[0]] -= self.final_result[i[1]]
 
-
-	# def _make_matrix_rectangular(self):
-	# 	"""Після додавання нових змінних до основних умов, додає їх в усі 
-	# 	рядки нерівностей, але з нульовими множниками"""
-	# 	max_len = 0
-	# 	for i in self.matrix:
-	# 		if len(i) > max_len:
-	# 			max_len = len(i)
-	# 	for i in range(len(self.matrix)):
-	# 		if len(self.matrix[i]) < max_len:
-	# 			to_insert = [Q(0)] * (max_len - len(self.matrix[i]))
-	# 			self.matrix[i] = np.append(self.matrix[i], to_insert)
-
 	def _get_col_num(self, indices_list):
 		"""Повертає індекс ведучого стовпчика, засновуючись на векторі з дельтами"""
 		if len(indices_list) == 1:
@@ -501,8 +483,8 @@ class SimplexSolver(Solver):
 		non_basis_set = set(range(len(self.objective_function))) - basis
 		for i in non_basis_set:
 			if self.deltas[i] == 0:
-				self.result_error = "infinite"
-				raise SolvingError("Базисній змінній відповідає нульова дельта:\nІснує нескінченна кількість розв'язків")
+				self.result_error = "infinite|{}".format(self.result)
+				raise SolvingError("Базисній змінній відповідає нульова дельта:\nІснує нескінченна кількість розв'язків\nОптимальне значення цільової функції: {}".format(self.result))
 
 	def _check_for_empty_allowable_area(self):
 		"""Перевіряє чи є у кінцевому векторі з множниками змінних штучна змінна з відмнінним від нуля множником"""
@@ -534,14 +516,14 @@ class SimplexSolver(Solver):
 			if safety_counter > 100:
 				raise SolvingError("Кількість ітерацій завелика, цикл зупинено")
 
-			self._count_deltas()
+			self._calculate_deltas()
 			min_delta = min(self.deltas)
 			if min_delta < 0:
 				self.col_num = self._get_col_num(np.where(self.deltas == min_delta)[0].tolist())
 				if self.col_num == -1:
 					self.result_error = "unlimited"
 					raise SolvingError("Неможливо обрати ведучий стовпчик, всі стовпчики з від'ємними дельта утворюють від'ємні тета:\nЦільова функція необмежена на допустимій області")
-				self._count_thetas()
+				self._calculate_thetas()
 				self.row_num = self._find_ind_of_min_theta()
 				if self.row_num == -1:
 					self.result_error = "unlimited"
@@ -694,12 +676,68 @@ class TestCommonLinearMethods(unittest.TestCase):
 		dummy.matrix = incorrect_matrix
 		self.assertTrue(np.array_equal(np.array([-1, -1, -1, -1]), dummy._get_basis_vectors_nums()))
 
+	def test_changing_variable_in_basis(self):
+		dummy = SimplexSolver(self.input_info)
+		dummy.basis = [0, 1]
+		dummy.basis_koef = [3, 3]
+		dummy.objective_function = [3, 3, 4]
+		dummy.col_num = 2
+		dummy.row_num = 1
+		dummy._set_basis_koef()
+		self.assertTrue(np.array_equal([0, 2], dummy.basis))
+		self.assertTrue(np.array_equal([3, 4], dummy.basis_koef))
+
+	def test_objective_function_expanding(self):
+		dummy = SimplexSolver(self.input_info)
+		dummy.objective_function = [1, 1]
+		new_matrix = np.array([
+			[2, 2, 1, 0],
+			[2, 2, 0, 1]
+		])
+		dummy.matrix = new_matrix
+		dummy._expand_objective_function_if_needed()
+		self.assertTrue(np.array_equal([1, 1, 0, 0], dummy.objective_function))
+
 class TestSimplexMethod(unittest.TestCase):
 	"""Тести для класу SimplexSolver"""
 	def __init__(self, *args, **kwargs):
 		super(TestSimplexMethod, self).__init__(*args, **kwargs)
 		self.input_info = {'data_type': 'string','data':test_input_string, "mute": True}
 		self.input_info_main = {"data_type": "file", "data": "input", "mute": True}
+
+	def test_calculating_deltas(self):
+		"""Тест на правильне розрахування відносних оцінок"""
+		dummy = SimplexSolver(self.input_info_main)
+		dummy.matrix = np.array([
+			[2, 2, 1, 0],
+			[2, 2, 0, 1]
+		])
+		dummy.objective_function = np.array([4, 6, 0, 1])
+		dummy.basis_koef = np.array([1, 1])
+		dummy._calculate_deltas()
+		self.assertTrue(np.array_equal([0, 2, -1, 0], dummy.deltas))
+
+	def test_calculating_thetas(self):
+		"""Тест на правильне розрахування вектору з відношеннями "тета" """
+		dummy = SimplexSolver(self.input_info_main)
+		dummy.matrix = np.array([
+			[-1, 2],
+			[3, 1]
+		])
+		dummy.row_num = 0
+		dummy.constants = np.array([-2, 0])
+		dummy._calculate_thetas()
+		self.assertTrue(np.array_equal([2, 0], dummy.thetas))
+
+	def test_finding_min_theta(self):
+		"""Тест на пошук індекса ведучого рядка"""
+		dummy = SimplexSolver(self.input_info_main)
+		incorrect_thetas = np.array([-1, -2, -3])
+		correct_thetas = np.array([1, -2, 3])
+		dummy.thetas = incorrect_thetas
+		self.assertEqual(-1, dummy._find_ind_of_min_theta())
+		dummy.thetas = correct_thetas
+		self.assertEqual(0, dummy._find_ind_of_min_theta())
 
 	def test_for_choosing_column(self):
 		"""Тест для методу, що обирає ведучий стовпчик (_get_col_num)"""
@@ -720,7 +758,102 @@ class TestSimplexMethod(unittest.TestCase):
 		dummy.matrix = incorrect_matrix
 		self.assertEqual(-1, dummy._get_col_num([1, 2]))
 
-	def test_for_right_solving(self):
+	def test_making_constants_positive(self):
+		"""Тест на перехід до нового базису якщо дельта не менші нуля, але серед вільних членів є від'ємні"""
+		info1 = """
+		3x[1] + 3x[2] => min
+		|x[1] + 4x[2] >=4
+		|4x[1] + x[2] >=4 
+		x[1]>=0,x[2]>=0
+		"""
+		info2 = """
+		3x[1] + 3x[2] => min
+		|x[1] + 4x[2] >=4
+		|4x[1] + x[2] <=4 
+		x[1]>=0,x[2]>=0
+		"""
+		dummy = SimplexSolver({"data_type": "string", "data": info1, "mute": True})
+
+		dummy.initial_variables_quantity = len(dummy.matrix[0])
+		dummy._normalize_conditions()
+		dummy._make_conditions_equalities()
+		dummy.basis = dummy._get_basis_vectors_nums()
+		for i in dummy.basis:
+			if i == -1:
+				dummy._add_artificial_basis()
+				break
+		dummy.basis_koef = np.array([0] * len(dummy.basis))
+		dummy._expand_objective_function_if_needed()
+		for i in range(len(dummy.basis)):
+			dummy.basis_koef[i] = dummy.objective_function[dummy.basis[i]]
+
+		old_matrix = np.array([
+			[-1, -4, 1, 0],
+			[-4, -1, 0, 1]
+		])
+		dummy._make_constants_positive_if_needed()
+		self.assertFalse(np.array_equal(old_matrix, dummy.matrix))
+		
+		old_matrix[1][:2] *= -1
+		dummy = SimplexSolver({"data_type": "string", "data": info2, "mute": True})
+
+		dummy.initial_variables_quantity = len(dummy.matrix[0])
+		dummy._normalize_conditions()
+		dummy._make_conditions_equalities()
+		dummy.basis = dummy._get_basis_vectors_nums()
+		for i in dummy.basis:
+			if i == -1:
+				dummy._add_artificial_basis()
+				break
+		dummy.basis_koef = np.array([0] * len(dummy.basis))
+		dummy._expand_objective_function_if_needed()
+		for i in range(len(dummy.basis)):
+			dummy.basis_koef[i] = dummy.objective_function[dummy.basis[i]]
+
+		dummy._make_constants_positive_if_needed()
+		self.assertTrue(np.array_equal(old_matrix, dummy.matrix))
+
+	def test_adding_artificial_basis(self):
+		"""Тест на коректне додання одиничної підматриці до основної"""
+		dummy = SimplexSolver(self.input_info_main)
+		dummy.matrix = np.array([
+			[2, 2],
+			[3, 3]
+		])
+		dummy.objective_function = np.array([1, 1])
+		dummy.constants = np.array([4, 4])
+		dummy.basis = [-1, -1]
+		dummy._add_artificial_basis()
+		self.assertTrue(np.array_equal([1, 1, 5, 5], dummy.objective_function))
+		self.assertTrue(np.array_equal([
+			[2, 2, 1, 0],
+			[3, 3, 0, 1]
+		], dummy.matrix))
+		self.assertTrue(np.array_equal([2, 3], dummy.artificial_variables))
+
+	def test_normalizing_conditions(self):
+		"""Тест на коректне зведення змінних до невід'ємних"""
+		info = """
+		2x[1]+x[2]=>max
+		|x[1]+x[2]>=-5
+		|2x[1]+2x[2]<=10
+		x[1]<=2
+		"""
+		dummy = SimplexSolver({"data_type": "string", "data": info, "mute": True})
+		dummy.initial_variables_quantity = len(dummy.matrix[0])
+		dummy._normalize_conditions()
+		correct_matrix = np.array([
+			[-1, 1, -1],
+			[-2, 2, -2]
+		])
+		self.assertTrue(np.array_equal(correct_matrix, dummy.matrix))
+		self.assertTrue(np.array_equal([2, -1, 1], dummy.objective_function))
+		self.assertTrue(np.array_equal([-7, 6], dummy.constants))
+		self.assertTrue(np.array_equal([(1, 2)], dummy.arbitrary_pairs))
+		self.assertTrue(np.array_equal([(0, '+=-2'), (0, '*=-1')], dummy.substitution_queue))
+
+
+	def test_for_correct_solving(self):
 		"""Тест на правильне розв'язання різних задач симплекс методом"""
 		with open("test_input") as f:
 			inner_text = f.read()
@@ -733,16 +866,15 @@ class TestSimplexMethod(unittest.TestCase):
 					self.assertEqual(dummy.expected_error, dummy.result_error)
 				else:
 					self.assertEqual(dummy.expected_result, dummy.result)
-					# if dummy.result_error == "":
-					# else:
 						
 
 if __name__ == "__main__":
 	unittest.main()
 	data_to_solve = """
-	x[1]+x[2]=>max
-	|x[1]+x[2]<=1
-	|x[1]+x[2]>=2
+	2x[1]+x[2]=>max
+	|x[1]+x[2]>=-5
+	|2x[1]+2x[2]<=10
+	x[1]<=2
 	"""
 
 	dummy = SimplexSolver({"data_type":"string", "data": data_to_solve, "mute":False})
