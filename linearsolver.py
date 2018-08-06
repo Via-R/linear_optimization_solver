@@ -572,6 +572,26 @@ class SimplexSolver(Solver):
 			print("Function value: {}".format(obj_func_val))
 
 
+# ------ Writer class section ------
+
+
+class Writer:
+	"""Клас, що загортає інформацію з класу Solver в текстову обгортку для подальшого виведення на екран"""
+	def __init__(self):
+		self.pointer = ""
+
+	def initiate(self, func_name):
+		"""Отримує назву методу, який має обробити вхідну інформацію та утворити з неї текстову версію"""
+		exec("self.pointer = self.{}".format(func_name))
+
+	def log(self, *args):
+		"""Передає аргументи функції, на яку вказує атрибут pointer"""
+		self.pointer(args)
+
+	def initial_info(self, args):
+		"""Виведення вхідних даних"""
+		print(args)
+
 # ------ Custom exception section ------
 
 
@@ -876,6 +896,10 @@ if __name__ == "__main__":
 	|2x[1]+2x[2]<=10
 	x[1]<=2
 	"""
+	
+	writer = Writer()
+	writer.initiate("initial_info")
+	writer.log("dsds", 'dsda', 121)
 
 	dummy = SimplexSolver({"data_type":"string", "data": data_to_solve, "mute":False})
 	try:
