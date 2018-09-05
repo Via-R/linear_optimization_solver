@@ -1,5 +1,6 @@
 import numpy as np
 import copy
+import re
 from fractions import Fraction as Q
 
 def prmatr(m):
@@ -23,6 +24,34 @@ class InputParser:
 				inner_text = f.read()
 		elif input_info["data_type"] == "string":
 			inner_text = input_info["data"]
+
+		elif input_info["data_type"] == "object":
+			cont = input_info["data"]
+			self.first_line_vect = list(map(Q, cont["obj_func"]))
+			self.task_type = cont["task_type"]
+			self.last_conditions = cont["last_cond"]
+			for i in range(len(self.last_conditions)):
+				self.last_conditions[i][1] = Q(self.last_conditions[i][1])
+			for i in range(len(cont["matrix"])):
+				cont["matrix"][i] = list(map(Q, cont["matrix"][i]))
+			matr_len = 0
+			for i in cont["matrix"]:
+				if len(i) > matr_len:
+					matr_len = len(i)
+			for i in range(len(cont["matrix"])):
+				if len(cont["matrix"][i]) < matr_len:
+					cont["matrix"][i] = cont["matrix"][i] + ([Q(0)] * (matr_len - len(cont["matrix"][i])))
+			if len(self.first_line_vect) < matr_len:
+				self.first_line_vect = self.first_line_vect + [Q(0)] * (matr_len - len(self.first_line_vect))
+			self.first_line_vect = np.array(self.first_line_vect)
+			self.main_matrix = np.array(cont["matrix"])
+			self.inequalities = cont["ineq"]
+			self.constants_vector = list(map(Q, cont["constants"]))
+			self.expected_error = ""
+			self.result = ""
+			self.result_list = ""
+			return
+
 		else:
 			print("Unknown format of input data")
 
@@ -143,7 +172,7 @@ class InputParser:
 		Форма виводу: |list of tuples| [ ( { index of inequality sign }, { condition's fraction } ), ... ].
 		Індекс кожної пари відповідає декрементованому індексу відповідної змінної.
 		Змінні не мають бути написані зі знаком "-"."""
-
+		
 		if line == "":
 			return [["arbitrary", Q(0)]] * self.var_quantity	
 		cond_list = line.split(",")
@@ -230,19 +259,17 @@ class Solver:
 
 	def __init__(self, input_data):
 		reader_data = ""
+		reader_data = InputParser(input_data).get_data()
+		self.objective_function = reader_data["objective_function"]
+		self.task_type = reader_data["task_type"]
+		self.last_conditions = reader_data["last_conditions"]
+		self.matrix = reader_data["matrix"]
+		self.inequalities = reader_data["inequalities"]
+		self.constants = reader_data["constants"]
 		if input_data['data_type'] != "object":
-			reader_data = InputParser(input_data).get_data()
-			self.objective_function = reader_data["objective_function"]
-			self.task_type = reader_data["task_type"]
-			self.last_conditions = reader_data["last_conditions"]
-			self.matrix = reader_data["matrix"]
-			self.inequalities = reader_data["inequalities"]
-			self.constants = reader_data["constants"]
 			self.expected_vect = np.array(reader_data["expected_vect"])
 			self.expected_result = Q(reader_data["expected_result"]) if reader_data["expected_result"] != "" else ""
 			self.expected_error = reader_data["error"]
-		else:
-			print("This part has not been implemented yet")
 		self.result_error = ""
 		self.mute = input_data["mute"]
 		self.col_num = 0
@@ -424,13 +451,13 @@ class SimplexSolver(Solver):
 		for i in range(len(self.matrix)):
 			if self.matrix[i][self.col_num] == 0:
 				self.thetas[i] = -1
-				self.writer.log(div1=self.constants[i], div2=self.matrix[i][self.col_num], error="zerodiv")
+				self.writer.log(div1=self.constants[i], div2=self.matrix[i][self.col_num], error="zerodiv", ind=self.basis[i])
 			elif self.matrix[i][self.col_num] < 0 and self.constants[i] == 0:
 				self.thetas[i] = -1
-				self.writer.log(div1=self.constants[i], div2=self.matrix[i][self.col_num], error="negative")
+				self.writer.log(div1=self.constants[i], div2=self.matrix[i][self.col_num], error="negative", ind=self.basis[i])
 			else:
 				self.thetas[i] = self.constants[i] / self.matrix[i][self.col_num]
-				self.writer.log(div1=self.constants[i], div2=self.matrix[i][self.col_num], res=self.thetas[i])
+				self.writer.log(div1=self.constants[i], div2=self.matrix[i][self.col_num], res=self.thetas[i], ind=self.basis[i])
 		self.writer.log(table=self._get_all_table_data())
 
 	def _find_ind_of_min_theta(self):
@@ -799,7 +826,7 @@ class Logger:
 			else:
 				to_emphasize.append({"name": i["name"], "coords": i["coords"]})
 
-		op_strings = [""] * len(table_info["matrix"])
+		op_strings = ["<td></td>"] * len(table_info["matrix"])
 		const = ""
 		for i in [x for x in range(len(op)) if x != row]:
 			const = str(eval("-Q({})/Q({})".format(op[i], op[row])))
@@ -812,10 +839,11 @@ class Logger:
 				const = "+ " + const
 			op_strings[i] = "<td>{} * {}</td>".format(const, self._wrap_variable(table_info["basis"][row])).replace("1 * ", "")
 		if len(op) > 0:
-			op_strings[row] = "<td>#</td>" if op[row] == 1 else "<td>/= {}</td>".format(op[row])
-			op_strings = ["<td></td>", "<td></td>"] + op_strings + ["<td></td>"]
-		else:
-			op_strings = ["", ""] + op_strings + [""]
+			if op[row] < -1:
+				op[row] = "({})".format(op[row])
+			# &#247; = ÷
+			op_strings[row] = "<td>#</td>" if op[row] == 1 else "<td>&#247; {}</td>".format(op[row])
+		op_strings = ["<td></td>", "<td></td>"] + op_strings
 		for i in range(len(table_info["basis"])):
 			table_info["basis"][i] = self._wrap_variable(table_info["basis"][i])
 
@@ -830,11 +858,11 @@ class Logger:
 		first_row = "<td></td><td></td>"
 		for i in objective_constants:
 			first_row += "<td>{}</td>".format(i)
-		first_row += "<td></td><td></td>"  + op_strings[0]
-		head_row = "<th>Koef</th><th>Basis</th>"
+		first_row += "<td></td><td></td>" + op_strings[0]
+		head_row = "<th>Z</th><th>Б</th>"
 		for i in range(len(table_info["objective_function"])):
 			head_row += "<th>{}</th>".format(table_info["objective_function"][i])
-		head_row += "<th>Arbs</th><th>Thetas</th>" + op_strings[1]
+		head_row += "<th>&beta;</th><th>&theta;</th>" + op_strings[1]
 		thead = "<tr>{}</tr><tr>{}</tr>".format(first_row, head_row)
 		tbody = ""
 		for i in range(len(table_info["matrix"])):
@@ -846,10 +874,10 @@ class Logger:
 			row += "<td>{}</td>".format(table_info["thetas"][i])
 			row += op_strings[i + 2]
 			tbody += "<tr>{}</tr>".format(row)
-		last_row = "<td></td><td>Deltas</td>"
+		last_row = "<td></td><td>&Delta;</td>"
 		for i in table_info["deltas"]:
 			last_row += "<td>{}</td>".format(i)
-		last_row += "<td></td><td></td>" + op_strings[-1]
+		last_row += "<td></td><td></td>"
 		tbody += "<tr>{}</tr>".format(last_row)
 		table = """
 		<table>
@@ -860,8 +888,28 @@ class Logger:
 
 	def get_logs(self):
 		"""Повертає усі накопичені методами класу записи."""
+		reps = {
+			"\t": "",
+			"\n": "<br>",
+			"=>": "&#129046;",
+			"<=": "&le;",
+			">=": "&ge;",
+			"*": "&middot;"
+		}
+		final_text = self.inner_log
+		for k, v in reps.items():
+			final_text = final_text.replace(k, v)
 
-		return self.inner_log.replace("\t", "").replace("\n", "<br>")
+		final_text = re.sub(r'\s[\/]\s', ' &#247; ', final_text)
+		
+		for match in re.finditer(r'[\d]+[\/]', final_text):
+			match = match.group()
+			final_text = final_text.replace(match, '<div class="frac"><span>' + match[:-1] + '</span><span class="symbol">/</span>@', 1)
+
+		for match in re.finditer(r'[\@][\d]+', final_text):
+			match = match.group()
+			final_text = final_text.replace(match, '<span class="bottom">' + match[1:] + '</span></div>', 1)
+		return final_text
 
 
 	# --------------- Helpers ---------------
@@ -887,8 +935,9 @@ class Logger:
 
 		text_part = ""
 		for i in range(len(matrix)):
-			text_part += "|" + self._vector_to_math(matrix[i], ineq[i], constants[i]) + "<br>"
+			text_part += "| " + self._vector_to_math(matrix[i], ineq[i], constants[i]) + "<br>"
 		if last_cond != "":
+			text_part += "<br>"
 			for i in range(len(last_cond)):
 				sign, val = (last_cond[i][0], last_cond[i][1]) if last_cond[i][0] != "arbitrary" else ("-", "довільна")
 				text_part += "{} {} {}, ".format(self._wrap_variable(i), sign, val)
@@ -903,7 +952,7 @@ class Logger:
 	def _add_entry(self, string):
 		"""Додає до основного тексту виконання алгоритму новий запис."""
 
-		self.inner_log += "<p>{}</p>".format(string)
+		self.inner_log += "<div>{}</div>".format(string)
 
 	def _emphasize(self, string):
 		"""Загортає дану в параметрах строку в спеціальний тег для подальшого особливого виділення в таблиці."""
@@ -913,7 +962,7 @@ class Logger:
 	def _wrap_variable(self, ind):
 		"""Повертає текстове представлення змінної за її індексом в цільовій функції."""
 
-		return "{}[{}]".format(self.var_names[ind][0], self.var_names[ind][1] + 1)
+		return "{}<sub>{}</sub>".format(self.var_names[ind][0], self.var_names[ind][1] + 1)
 
 	def _wrap_multiplication(self, m1, m2):
 		"""Повертає текстове представлення скалярного добутку двох векторів"""
@@ -934,6 +983,7 @@ class Logger:
 			text_part += "{}, ".format(i)
 		return "({})".format(text_part[:-2])
 
+
 	# --------------- Pointer functions ---------------
 
 
@@ -941,7 +991,7 @@ class Logger:
 		"""Виведення вхідних даних."""
 
 		if input_data == "":
-			text_part = "Отримано наступні вхідні дані для подальшого розв'язку сиплекс-методом:"
+			text_part = "Отримано наступні вхідні дані для подальшого розв'язку:"
 			self._add_entry(self._bold(text_part))
 			return
 		if input_data["is_max"]:
@@ -951,7 +1001,9 @@ class Logger:
 			self.var_names.append(["x", i])
 			self.counters["x"] += 1
 		text_part = """Цільова функція: {0} 
+
 		Обмеження:
+
 		{1}
 		""".format(
 			self._vector_to_math(input_data["objective_function"], "=>", input_data["task_type"]),
@@ -972,14 +1024,14 @@ class Logger:
 			return
 		text_part = self._wrap_variable(input_data["index"])
 		if input_data["op"] == "a":
-			text_part = "a[{}] = -{}".format(
+			text_part = "a<sub>{}</sub> = -{}".format(
 				self.counters["a"] + 1,
 				text_part
 			)
 			self.var_names[input_data["index"]] = ["a", self.counters["a"]]
 		elif input_data["op"] == "b":
 			constant = input_data["substitution"] * -1
-			text_part = "b[{}] = {} {} {}".format(
+			text_part = "b<sub>{}</sub> = {} {} {}".format(
 				self.counters["b"] + 1,
 				text_part,
 				"+" if constant >= 0 else "-",
@@ -987,7 +1039,7 @@ class Logger:
 			)
 			self.var_names[input_data["index"]] = ["b", self.counters["b"]]
 		elif input_data["op"] == "c":
-			text_part = "{} = c[{}] - c[{}]".format(
+			text_part = "{} = c<sub>{}</sub> - c<sub>{}</sub>".format(
 				text_part,
 				self.counters["c"] + 1,
 				self.counters["c"] + 2
@@ -1029,11 +1081,13 @@ class Logger:
 		text_part = """Для введення штучного базису використовуємо М-метод. Знаходимо найбільший множник серед усіх змінних та додаємо до нього одиницю.
 		Отримуємо М = {}
 
-		Цільова функція набуває вигляд: {}
+		Цільова функція набуває вигляду: {}
+
 		Загальні умови:
+
 		{}""".format(
 			input_data["m"],
-			self._vector_to_math(input_data["objective_function"], ">=", input_data["task_type"], input_data["constant"]),
+			self._vector_to_math(input_data["objective_function"], "=>", input_data["task_type"], input_data["constant"]),
 			self._wrap_conditions(input_data["matrix"], input_data["inequalities"], input_data["constants"], input_data["last_cond"])
 		)
 		self._add_entry(text_part)
@@ -1108,15 +1162,16 @@ class Logger:
 			self._add_entry(text_part)
 			self._add_entry(self.draw_table(input_data["table"], [{"name": "thetas", "coords": -1}]))
 			return
-		text_part = "~ {} / {}: ".format(input_data["div1"], input_data["div2"])
+		parsed_div2 = input_data["div2"] if input_data["div2"] >= 0 else "({})".format(input_data["div2"])
+		text_part = "{}: {} / {} ".format(self._wrap_variable(input_data["ind"]), input_data["div1"], parsed_div2)
 		if "error" in input_data:
 			if input_data["error"] == "zerodiv":
-				text_part += "Відношення містить ділення на нуль, не розраховуємо. Встановимо значення відношення рівним -1"
+				text_part += "- Відношення містить ділення на нуль, не розраховуємо. Встановимо значення відношення рівним -1"
 			elif input_data["error"] == "negative":
-				text_part += "Даний рядок не може бути ведучим через те, що відповідний йому елемент стовпчика менший або рівний нулю. Встановимо значення відношення рівним -1"
+				text_part += "- Даний рядок не може бути ведучим через те, що відповідний йому елемент стовпчика менший або рівний нулю. Встановимо значення відношення рівним -1"
 			self._add_entry(text_part)
 			return
-		text_part += str(input_data["res"])
+		text_part += "= " + str(input_data["res"])
 		self._add_entry(text_part)
 
 	def _basis_col(self, input_data = ""):
@@ -1220,11 +1275,11 @@ class Logger:
 				else:
 					var = "-" + var
 					r_part = "{}".format(var)
-				text_part = "x[{}] = {}".format(input_data["sub_queue"][i][0] + 1, r_part)
+				text_part = "x<sub>{}</sub> = {}".format(input_data["sub_queue"][i][0] + 1, r_part)
 				self._add_entry(text_part)
 			return
 		elif "arb1" in input_data:
-			text_part = "x[{}] = {} - {}".format(
+			text_part = "x<sub>{}</sub> = {} - {}".format(
 				input_data["arb1"] + 1, 
 				self._wrap_variable(input_data["arb1"]),
 				self._wrap_variable(input_data["arb2"])
@@ -1242,7 +1297,8 @@ class Logger:
 		if "big_vect" in input_data:
 			text_part = "Результат пройшов перевірку на коректність."
 			self._add_entry(text_part)
-			text_part = """Нарешті, виводимо кінцевий результат:
+			text_part = """
+			Нарешті, виводимо кінцевий результат:
 
 			Вектор з усіма змінними: {}
 			Вектор з шуканими змінними: {}
@@ -1416,11 +1472,12 @@ class TestSimplexMethod(unittest.TestCase):
 
 		dummy = SimplexSolver(self.input_info_main)
 		dummy.matrix = np.array([
-			[-1, 2],
-			[3, 1]
+			[-1, 2, 1, 0],
+			[3, 1, 0, 1]
 		])
 		dummy.row_num = 0
 		dummy.constants = np.array([-2, 0])
+		dummy.basis = [2, 3]
 		dummy._calculate_thetas()
 		self.assertTrue(np.array_equal([2, 0], dummy.thetas))
 
@@ -1644,19 +1701,18 @@ if __name__ == "__main__":
 	data_to_solve = """
 	4x[1] +4x[2] +2x[3] +4x[4] +3x[5] +x[6]=>max
 
-|-3x[1] + 2x[3] + 3x[4] + 3x[5] + 4x[6] = 1
-|3x[1] - 2x[2] + x[3] + 4x[4] + 3x[5] - 3x[6] = 2
-|4x[1] - 2x[2] + x[3] - 4x[4] - x[5] - x[6] = 2
-|2x[1] + 3x[2] + 3x[3] + x[4] + 2x[5] - 3x[6] = 3 
+	|-3x[1] + 2x[3] + 3x[4] + 3x[5] + 4x[6] = 1
+	|3x[1] - 2x[2] + x[3] + 4x[4] + 3x[5] - 3x[6] = 2
+	|4x[1] - 2x[2] + x[3] - 4x[4] - x[5] - x[6] = 2
+	|2x[1] + 3x[2] + 3x[3] + x[4] + 2x[5] - 3x[6] = 3 
 
-x[1]>=0,x[2]>=0,x[3]>=0,x[4]>=0,x[5]>=0,x[6]>=0
+	x[1]>=0,x[2]>=0,x[3]>=0,x[4]>=0,x[5]>=0,x[6]>=0
 	"""
 	data_to_solve1 = """
-	-x[1]+x[2]=>max
-|x[2]>=0
-|x[1]-4x[2]>=-2
-|x[1]+x[2]=-2
-x[1]<=5
+		x[1]=>max
+	|x[1]>=0
+	
+	x[1]<=5
 	"""
 	dummy = SimplexSolver({"data_type":"string", "data": data_to_solve1, "mute":False})
 	f = open("output.html", "w")
