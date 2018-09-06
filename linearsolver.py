@@ -404,8 +404,16 @@ class Solver:
 
 	def get_result(self):
 		"""Повертає результат обчислень"""
+		errors = ""
+		try:
+			self.solve()
+		except SolvingError as err:
+			errors = str(err).replace("\n", "<br>")
 
-		return self.writer.get_logs()
+		if errors == "":
+			return self.writer.get_logs()
+		
+		return "{}<div>{}</div>".format(self.writer.get_logs(), errors)
 
 class SimplexSolver(Solver):
 	"""Виконує розв'язання задачі лінійного програмування симплекс методом."""
@@ -1297,8 +1305,7 @@ class Logger:
 		if "big_vect" in input_data:
 			text_part = "Результат пройшов перевірку на коректність."
 			self._add_entry(text_part)
-			text_part = """
-			Нарешті, виводимо кінцевий результат:
+			text_part = """Нарешті, виводимо кінцевий результат:
 
 			Вектор з усіма змінними: {}
 			Вектор з шуканими змінними: {}
@@ -1697,30 +1704,4 @@ class TestSimplexMethod(unittest.TestCase):
 
 
 if __name__ == "__main__":
-	# unittest.main()
-	data_to_solve = """
-	4x[1] +4x[2] +2x[3] +4x[4] +3x[5] +x[6]=>max
-
-	|-3x[1] + 2x[3] + 3x[4] + 3x[5] + 4x[6] = 1
-	|3x[1] - 2x[2] + x[3] + 4x[4] + 3x[5] - 3x[6] = 2
-	|4x[1] - 2x[2] + x[3] - 4x[4] - x[5] - x[6] = 2
-	|2x[1] + 3x[2] + 3x[3] + x[4] + 2x[5] - 3x[6] = 3 
-
-	x[1]>=0,x[2]>=0,x[3]>=0,x[4]>=0,x[5]>=0,x[6]>=0
-	"""
-	data_to_solve1 = """
-		x[1]=>max
-	|x[1]>=0
-	
-	x[1]<=5
-	"""
-	dummy = SimplexSolver({"data_type":"string", "data": data_to_solve1, "mute":False})
-	f = open("output.html", "w")
-	errors = ""
-	try:
-		dummy.solve()
-	except SolvingError as err:
-		errors = err
-	else:
-		print("OK")
-	f.write("{}<br><br>{}".format(dummy.get_result(), errors))
+	unittest.main()
