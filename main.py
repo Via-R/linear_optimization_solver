@@ -1,6 +1,6 @@
 from linearsolver import SimplexSolver
 
-input_info = {"data_type": "file", "data": "input", "mute": False}
-solver = SimplexSolver(input_info)
-solver.solve()
-res = solver.get_result()
+solver = SimplexSolver("file", "input")
+result = solver.get_result()
+with open("output.html", "w") as f: 
+	f.write(result) 
