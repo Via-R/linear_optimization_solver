@@ -863,6 +863,16 @@ class DualSimplexSolver(Solver):
 		self.previous_basis_sets = []
 
 	def _get_first_basis(self):
+		"""Шукає підхожий базис.
+
+		Орієнтуючись на розмірність базису, виконує перебір 
+		всх можливих комбінацій векторів для утворення базису,
+		розв'язує підсистему двоїстої задачі за обраними векторами.
+		Якщо розв'язок задовольняє умови двоїстої задачі, то обрані
+		вектори обираються підхожим базисом в такому порядку, в якому
+		вони утворили розв'язок підсистеми.
+		Якщо такий розв'язок не знайдено, повертає None."""
+
 		t_m = self.matrix.T
 		t_c = self.objective_function
 		basis_size = len(t_m[0])
@@ -892,6 +902,12 @@ class DualSimplexSolver(Solver):
 		return None
 
 	def _set_first_basis(self, new_basis):
+		"""Встановлює перший базис.
+
+		Створює одиничну підматрицю на місці заданих векторів,
+		якщо ж підхожий базис відсутній, то алгоритм розв'язання
+		не може бути виконаний даним методом."""
+
 		if new_basis == None:
 			self.result_error = "unlimited"
 			raise(SolvingError("Підхожий базис обрати неможливо, задана задача не розв'язується двоїстим симплекс методом"))
@@ -914,6 +930,11 @@ class DualSimplexSolver(Solver):
 		self.basis = list(new_basis)
 
 	def _choose_first_basis(self):
+		"""Обирає перший (підхожий) базис.
+
+		Якщо цільова функція містить від'ємні коефіцієнти, виконує
+		пошук нового підхожого базиса, інакше обирає вже існуючий."""
+
 		for i in self.objective_function:
 			if i < 0:
 				new_basis = self._get_first_basis()
@@ -925,16 +946,27 @@ class DualSimplexSolver(Solver):
 			self._add_deltas()
 
 	def _add_deltas(self):
+		"""Додає оцінки дельта до основної матриці у вигляді останнього рядка."""
+
 		self.matrix = np.append(self.matrix, [self.objective_function], axis=0)
 		self.constants = np.append(self.constants, 0)
 
 	def _choose_row(self):
+		"""Вибір ведучого рядка.
+
+		Обирається той, якому відповідає найменший від'ємний вільний член.
+		Якщо таких немає, то повертає -1"""
+
 		if np.amin(self.constants[:-1]) < 0:
 			self.row_num = np.argmin(self.constants[:-1])
 		else:
 			self.row_num = -1
 
 	def _count_thetas(self):
+		"""Розраховує оцінки тета.
+
+		Тета - відношення оцінки дельта до елемента ведучого рядка по модулю."""
+
 		self.thetas = [Q(0)] * len(self.matrix[0])
 		for i in range(len(self.matrix[self.row_num])):
 			self.thetas[i] = abs(self.matrix[-1, i] / self.matrix[self.row_num, i]) if self.matrix[-1, i] != 0 and self.matrix[self.row_num, i] != 0 else -1
@@ -946,6 +978,11 @@ class DualSimplexSolver(Solver):
 					self.thetas[i] = -1
 
 	def _find_ind_of_min_theta(self):
+		"""Знаходить індекс мінімальної додатньої тети.
+
+		Якщо такої немає, отже всі відношення дельт до елементів ведучого
+		рядка не задовольняють умовам вибору ведучого стовпчика."""
+
 		max_el = np.amax(self.thetas)
 		if max_el == -1:
 			self.col_num = -1
@@ -1012,20 +1049,12 @@ class DualSimplexSolver(Solver):
 				break
 		self._choose_first_basis()
 		self.previous_basis_sets.append(set(self.basis))
-		# self._add_deltas()
-		# print("FINAL")
-		# prmatr(self.matrix)
-		# prvect(self.constants)
-		# prvect(self.deltas)
-		# prvect(self.objective_function)
-		# prvect(self.basis)
 		counter = 0
 		self._choose_row()
 		self._count_thetas()
 		while self.row_num != -1 and counter < 100:
 			self._find_ind_of_min_theta()
 			if self.col_num == -1:
-				# print("Here goes some error with selecting a column")
 				self.result_error = "empty"
 				raise SolvingError("Неможливо обрати ведучий стовпчик (всі можливі змінні були занесені до базису, але оптимум не було досягнуто) - допустима область порожня")
 				break
