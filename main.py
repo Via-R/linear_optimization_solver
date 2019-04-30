@@ -1,6 +1,6 @@
-from linearsolver import SimplexSolver
+from linearsolver import DualSimplexSolver
 
-solver = SimplexSolver("file", "input")
-result = solver.get_result()
+solver = DualSimplexSolver("file", "input")
+result = '<link rel="stylesheet" type="text/css" href="local.css"/>' + solver.get_result()
 with open("output.html", "w") as f: 
 	f.write(result) 

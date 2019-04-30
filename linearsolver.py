@@ -2,7 +2,15 @@ import numpy as np
 import copy, re, sys
 from itertools import combinations
 from fractions import Fraction as Q
-from gauss_matrix_solving import gauss_solve
+
+import importlib
+spam_spec = importlib.util.find_spec("solver")
+found_module = spam_spec is not None
+
+if found_module:
+    from solver.modules.gauss_matrix_solving import gauss_solve
+else:
+	from gauss_matrix_solving import gauss_solve
 
 def prvect(v):
 	"""Виводить вектор у звичайному вигляді, без технічних символів та слів."""
@@ -383,7 +391,7 @@ class Solver:
 	def _make_conditions_equalities(self, canonical=False):
 		"""Зводить всі нерівності умов до рівностей.
 
-		По замовучванню зводить систему до канонічної форми."""
+		По замовучванню зводить систему до псевдоканонічної форми."""
 
 		was_changed = False
 		for i in range(len(self.inequalities)):
@@ -861,6 +869,7 @@ class DualSimplexSolver(Solver):
 		self.deltas = np.array([])
 		self.thetas = np.array([])
 		self.previous_basis_sets = []
+		self.writer.set_task_type("dual")
 
 	def _get_first_basis(self):
 		"""Шукає підхожий базис.
@@ -873,12 +882,17 @@ class DualSimplexSolver(Solver):
 		вони утворили розв'язок підсистеми.
 		Якщо такий розв'язок не знайдено, повертає None."""
 
+		self.writer.initiate("find_first_compatible_basis")
 		t_m = self.matrix.T
 		t_c = self.objective_function
 		basis_size = len(t_m[0])
 		possible_basis_list = list(combinations(range(len(t_m)), basis_size))
 		possible_basis_list.reverse()
 
+		self.writer.log(
+			system=t_m,
+			constants=t_c
+		)
 		for possible_comb in possible_basis_list:
 			possible_comb = np.array(possible_comb)
 			temp_matrix = np.zeros((basis_size, basis_size))
@@ -898,6 +912,9 @@ class DualSimplexSolver(Solver):
 				if t_m[i].dot(temp_values) > t_c[i]:
 					break
 			else:
+				self.writer.log(
+					answer=possible_comb,
+				)
 				return possible_comb
 		return None
 
@@ -907,7 +924,7 @@ class DualSimplexSolver(Solver):
 		Створює одиничну підматрицю на місці заданих векторів,
 		якщо ж підхожий базис відсутній, то алгоритм розв'язання
 		не може бути виконаний даним методом."""
-
+		self.writer.initiate("set_first_compatible_basis")
 		if new_basis == None:
 			self.result_error = "unlimited"
 			raise(SolvingError("Підхожий базис обрати неможливо, задана задача не розв'язується двоїстим симплекс методом"))
@@ -927,22 +944,30 @@ class DualSimplexSolver(Solver):
 			self.col_num = temp_basis_list[row]
 			self._make_basis_column()
 		
+		self.matrix[-1] *= -1
+		self.constants[-1] *= -1
+
 		self.basis = list(new_basis)
+		self.writer.initiate("finalize_first_compatible_basis")
+		self.writer.log(
+			table=self._get_all_table_data()
+		)
 
 	def _choose_first_basis(self):
 		"""Обирає перший (підхожий) базис.
 
 		Якщо цільова функція містить від'ємні коефіцієнти, виконує
 		пошук нового підхожого базиса, інакше обирає вже існуючий."""
-
+		self.writer.initiate("check_first_compatible_basis")
 		for i in self.objective_function:
 			if i < 0:
+				self.writer.log( changed=True )
+
 				new_basis = self._get_first_basis()
 				self._set_first_basis(new_basis)
-				self.matrix[-1] *= -1
-				self.constants[-1] *= -1
 				break
 		else:
+			self.writer.log( changed=False )
 			self._add_deltas()
 
 	def _add_deltas(self):
@@ -1076,6 +1101,7 @@ class DualSimplexSolver(Solver):
 		prvect(self.result_vect)
 		print("Obj:", self.result)
 
+
 # ------ Logger class section ------
 
 
@@ -1083,7 +1109,7 @@ class Logger:
 	"""Загортає інформацію з класу Solver в текстову обгортку для подальшого виведення на екран."""
 
 	def __init__(self, mute):
-		self.pointer = ""
+		self.pointer = None
 		self.inner_log = ""
 		self.var_names = []
 		self.counters = {
@@ -1093,6 +1119,10 @@ class Logger:
 			"x": 0
 		}
 		self.mute = mute
+		self.task_type = "simple"
+
+	def set_task_type(self, task_type):
+		self.task_type = task_type
 
 	def initiate(self, func_name):
 		"""Отримує та зберігає назву методу, який має обробити вхідну інформацію та утворити з неї текстову версію."""
@@ -1110,6 +1140,8 @@ class Logger:
 		"""Утворює html представлення симплекс таблиці та повертає його."""
 
 		table_info = copy.deepcopy(table_info)
+
+		# Утворення списку елементів для подальшого виділення
 		to_emphasize = []
 		for i in emphasize_list:
 			if i["coords"] == -1:
@@ -1119,6 +1151,7 @@ class Logger:
 			else:
 				to_emphasize.append({"name": i["name"], "coords": i["coords"]})
 
+		# Дописування операцій над рядками в останню колонку
 		op_strings = ["<td></td>"] * len(table_info["matrix"])
 		const = ""
 		for i in [x for x in range(len(op)) if x != row]:
@@ -1135,49 +1168,77 @@ class Logger:
 		if len(op) > 0:
 			if op[row] < -1:
 				op[row] = "({})".format(op[row])
-			# &#247; = ÷
+			# &#247; is ÷
 			op_strings[row] = "<td>#</td>" if op[row] == 1 else "<td>&#247; {}</td>".format(op[row])
 		op_strings = ["<td></td>", "<td></td>"] + op_strings
 		for i in range(len(table_info["basis"])):
 			table_info["basis"][i] = self._wrap_variable(table_info["basis"][i])
 
+		# Додавання коефіціентів змінних цільової функції в перший рядок таблиці
 		objective_constants = []
-		for i in range(len(table_info["objective_function"])):
-			objective_constants.append(table_info["objective_function"][i])
-			table_info["objective_function"][i] = self._wrap_variable(i)
+		if self.task_type == "simple":
+			for i in range(len(table_info["objective_function"])):
+				objective_constants.append(table_info["objective_function"][i])
+				table_info["objective_function"][i] = self._wrap_variable(i)
+		elif self.task_type == "dual":
+			objective_constants = [""] * len(table_info["objective_function"])
 
+		# Виділення потрібних елементів таблиці
 		for i in to_emphasize:
 			table_info[i["name"]][i["coords"]] = self._emphasize(table_info[i["name"]][i["coords"]])
 
+		# Задання першого рядку (коефіцієнти змінних в цільовій функції)
 		first_row = "<td></td><td></td>"
 		for i in objective_constants:
 			first_row += "<td>{}</td>".format(i)
 		first_row += "<td></td><td></td>" + op_strings[0]
-		head_row = "<th>Z</th><th>Б</th>"
+
+		# Задання рядку з назвами колонок
+		head_row = "<th>Z</th><th>Б</th>" if self.task_type == "simple" else "<th></th><th>Б</th>"
 		for i in range(len(table_info["objective_function"])):
-			head_row += "<th>{}</th>".format(table_info["objective_function"][i])
-		head_row += "<th>&beta;</th><th>&theta;</th>" + op_strings[1]
+			head_el = table_info["objective_function"][i] if self.task_type == "simple" else self._wrap_variable(i)
+			head_row += "<th>{}</th>".format(head_el)
+		
+		head_row += "<th>&beta;</th>" + ( "<th>&theta;</th>" if self.task_type == "simple" else "<th></th>" ) + op_strings[1]
+
 		thead = "<tr>{}</tr><tr>{}</tr>".format(first_row, head_row)
+
+		# Утворення записів основних рядків таблиці
 		tbody = ""
-		for i in range(len(table_info["matrix"])):
-			row = "<td>{}</td>".format(table_info["basis_koef"][i])
+		deltas_in_the_last_row = 1 if self.task_type == "dual" else 0
+		for i in range(len(table_info["matrix"]) - deltas_in_the_last_row):
+			row = "<td>{}</td>".format(table_info["basis_koef"][i]) if self.task_type == "simple" else "<td></td>"
 			row += "<td>{}</td>".format(table_info["basis"][i])
 			for j in range(len(table_info["matrix"][i])):
 				row += "<td>{}</td>".format(table_info["matrix"][i][j])
 			row += "<td>{}</td>".format(table_info["constants"][i])
-			row += "<td>{}</td>".format(table_info["thetas"][i])
+			row += "<td>{}</td>".format(table_info["thetas"][i])  if self.task_type == "simple" else "<td></td>" 
 			row += op_strings[i + 2]
 			tbody += "<tr>{}</tr>".format(row)
+
+		# Додання рядку з дельтами
 		last_row = "<td></td><td>&Delta;</td>"
-		for i in table_info["deltas"]:
-			last_row += "<td>{}</td>".format(i)
-		last_row += "<td></td><td></td>"
+		if self.task_type == "simple":
+			for i in table_info["deltas"]:
+				last_row += "<td>{}</td>".format(i)
+		elif self.task_type == "dual":
+			for i in table_info["matrix"][-1]:
+				last_row += "<td>{}</td>".format(i)
+
+
+		if self.task_type == "simple":
+			last_row += "<td></td><td></td><td></td>"
+		elif self.task_type == "dual":
+			last_row += "<td>{}</td><td>{}</td>".format(table_info["constants"][-1], op_strings[-1])
+
+		# Склеювання всіх рядків разом в одну таблицю
 		tbody += "<tr>{}</tr>".format(last_row)
 		table = """
 		<table>
 			<thead>{}</thead>
 			<tbody>{}</tbody>
 		</table>""".format(thead, tbody).replace("\n", "")
+
 		return table
 
 	def get_logs(self):
@@ -1209,7 +1270,7 @@ class Logger:
 	# --------------- Helpers ---------------
 
 
-	def _vector_to_math(self, expression, operation, right_part, constant = 0):
+	def _vector_to_math(self, expression, operation, right_part, constant = 0, custom_letter = None):
 		"""Утворює текстове представлення рядка-нерівності.
 
 		Може утворювати представлення цільової функції."""
@@ -1217,11 +1278,11 @@ class Logger:
 		text_part = ""
 		for i in range(1, len(expression)):
 			sign = " + " if expression[i] >= 0 else " - "
-			to_add = "{}{}*{}".format(sign, abs(expression[i]), self._wrap_variable(i))
+			to_add = "{}{}*{}".format(sign, abs(expression[i]), self._wrap_variable(i, custom_letter))
 			text_part = text_part + to_add
 		sign = " + " if constant >= 0 else " - "
 		text_part += "" if constant == 0 else "{}{}".format(sign, abs(constant))
-		text_part = "{}*{}{} {} {}".format(expression[0], self._wrap_variable(0), text_part, operation, right_part)
+		text_part = "{}*{}{} {} {}".format(expression[0], self._wrap_variable(0, custom_letter), text_part, operation, right_part)
 		return text_part
 
 	def _wrap_conditions(self, matrix, ineq, constants, last_cond = ""):
@@ -1253,10 +1314,11 @@ class Logger:
 
 		return "<b>{}</b>".format(string)
 
-	def _wrap_variable(self, ind):
+	def _wrap_variable(self, ind, custom_letter=None):
 		"""Повертає текстове представлення змінної за її індексом в цільовій функції."""
 
-		return "{}<sub>{}</sub>".format(self.var_names[ind][0], self.var_names[ind][1] + 1)
+		letter = self.var_names[ind][0] if custom_letter == None else custom_letter
+		return "{}<sub>{}</sub>".format(letter, self.var_names[ind][1] + 1)
 
 	def _wrap_multiplication(self, m1, m2):
 		"""Повертає текстове представлення скалярного добутку двох векторів"""
@@ -1489,6 +1551,7 @@ class Logger:
 				text_part = "Ведучий стовпчик вже містить коректний одиничний вектор, перетворення не потрібні"
 				self._add_entry(text_part)
 				return
+
 		self._add_entry(self.draw_table(
 			input_data["p_table"],
 			[
@@ -1598,6 +1661,61 @@ class Logger:
 				input_data["obj_val"]
 			)
 			self._add_entry(text_part)
+
+	def _check_first_compatible_basis(self, input_data = ""):
+		if input_data == "":
+			text_part = self._bold("Перевіряємо, чи розв'язується задана задача модифікованим симплекс методом (коефіцієнти цільової функції мають бути невід'ємні):")
+			self._add_entry(text_part)
+			return
+		if "changed" in input_data:
+			if input_data["changed"] == False:
+				text_part = "Задача задовольняє умови застосування двоїстого симплекс методу, базис залишається тим самим."
+			else:
+				text_part = "Цільова функція містить від'ємні коефіцієнти, ініціюємо пошук підхожого базису для перетворення задачі на аналогічну з коректною цільовою функцією."
+			self._add_entry(text_part)
+
+	def _find_first_compatible_basis(self, input_data = ""):
+		if input_data == "":
+			text_part = self._bold("Утворюємо двоїсту задачу та виписуємо її систему:")
+			self._add_entry(text_part)
+			return
+		if "system" in input_data and "constants" in input_data:
+			text_part = ""
+			for row_ind in range(len(input_data["system"])):
+				# _vector_to_math(self, expression, operation, right_part, constant = 0, custom_letter = None):
+				row = input_data["system"][row_ind]
+				constant = input_data["constants"][row_ind]
+				text_part += "{}) ".format(row_ind + 1) + self._vector_to_math(row, "<=", constant, 0, "y") + "\n"
+			self._add_entry(text_part)
+			return
+		if "answer" in input_data:
+			row_numbers = ""
+			variables = ""
+			for i in input_data["answer"]:
+				row_numbers += "{}, ".format(i + 1)
+				variables += "{}, ".format(self._wrap_variable(i))
+
+			text_part = "Поклавши в рядках з номерами {} замість нерівностей рівності, всі інші нерівності виконуються, отже вектори {} утворюють підхожий базис.".format(
+				row_numbers[:-2], 
+				variables[:-2]
+			)
+			self._add_entry(text_part)
+
+	def _set_first_compatible_basis(self, input_data = ""):
+		if input_data == "":
+			text_part = self._bold("Змінюємо початковий базис на підхожий (додатково домножуємо рядок з дельтами на -1):\n")
+			self._add_entry(text_part)
+			return
+
+	def _finalize_first_compatible_basis(self, input_data = ""):
+		if input_data == "":
+			text_part = self._bold("Перехід до підхожого базису завершено:")
+			self._add_entry(text_part)
+			text_part = "Можна домножити рядок з дельтами на -1 і продовжити розрахунки."
+			self._add_entry(text_part)
+			return
+		if "table" in input_data:
+			self._add_entry(self.draw_table(input_data["table"]))
 
 
 # ------ Custom exception section ------
